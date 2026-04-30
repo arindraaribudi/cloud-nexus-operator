@@ -1,0 +1,72 @@
+package main
+
+import (
+	"testing"
+)
+
+func TestParseUpstream_Valid(t *testing.T) {
+	tests := []struct {
+		path     string
+		wantHost string
+		wantRest string
+		wantOK   bool
+	}{
+		{
+			path:     "/v2/asia-southeast3-docker.pkg.dev/my-project/my-app/manifests/latest",
+			wantHost: "asia-southeast3-docker.pkg.dev",
+			wantRest: "my-project/my-app/manifests/latest",
+			wantOK:   true,
+		},
+		{
+			path:     "/v2/123456789.dkr.ecr.us-east-1.amazonaws.com/my-image/blobs/sha256:abc",
+			wantHost: "123456789.dkr.ecr.us-east-1.amazonaws.com",
+			wantRest: "my-image/blobs/sha256:abc",
+			wantOK:   true,
+		},
+		{
+			path:     "/v2/",
+			wantHost: "",
+			wantRest: "",
+			wantOK:   false,
+		},
+		{
+			path:     "/v2/nohost/manifests/tag",
+			wantHost: "",
+			wantRest: "",
+			wantOK:   false,
+		},
+	}
+	for _, tc := range tests {
+		host, rest, ok := parseUpstream(tc.path)
+		if ok != tc.wantOK {
+			t.Errorf("path=%q: got ok=%v, want %v", tc.path, ok, tc.wantOK)
+		}
+		if host != tc.wantHost {
+			t.Errorf("path=%q: got host=%q, want %q", tc.path, host, tc.wantHost)
+		}
+		if rest != tc.wantRest {
+			t.Errorf("path=%q: got rest=%q, want %q", tc.path, rest, tc.wantRest)
+		}
+	}
+}
+
+func TestAuthScheme(t *testing.T) {
+	tests := []struct {
+		host string
+		want string
+	}{
+		{"asia-southeast3-docker.pkg.dev", "gcp"},
+		{"gcr.io", "gcp"},
+		{"us.gcr.io", "gcp"},
+		{"123456.dkr.ecr.us-east-1.amazonaws.com", "ecr"},
+		{"ghcr.io", ""},
+		{"registry-1.docker.io", ""},
+		{"example.com", ""},
+	}
+	for _, tc := range tests {
+		got := authScheme(tc.host)
+		if got != tc.want {
+			t.Errorf("host=%q: got %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}

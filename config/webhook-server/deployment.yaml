@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frps-webhook
+  namespace: system
+  labels:
+    app: frps-webhook
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  selector:
+    matchLabels:
+      app: frps-webhook
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: frps-webhook
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - command:
+        - /frps-webhook
+        args:
+          - --health-probe-bind-address=:8082
+        image: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook:1.0.0
+        name: frps-webhook
+        ports:
+        - containerPort: 9090
+          name: frps-plugin
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        volumeMounts: []
+      volumes: []
+      serviceAccountName: frps-webhook
+      terminationGracePeriodSeconds: 10

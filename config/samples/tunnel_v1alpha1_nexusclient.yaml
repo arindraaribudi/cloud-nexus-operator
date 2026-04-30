@@ -1,0 +1,12 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusClient
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: nexusclient-sample
+spec:
+  serverRef:
+    name: nexusserver-sample
+  admin:
+    port: 7400

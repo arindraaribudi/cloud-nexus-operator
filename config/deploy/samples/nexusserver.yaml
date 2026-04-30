@@ -1,0 +1,19 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusServer
+metadata:
+  name: hub
+  namespace: frp-system
+spec:
+  replicas: 1
+  bindPort: 7000
+  service:
+    type: LoadBalancer
+    ports:
+      - name: frp
+        port: 7000
+        protocol: TCP
+      # Expose one port per FrpProxy remotePort so the LoadBalancer routes
+      # tunnel traffic.  Add an entry here whenever you add a new FrpProxy.
+      - name: tunnel
+        port: 6000
+        protocol: TCP

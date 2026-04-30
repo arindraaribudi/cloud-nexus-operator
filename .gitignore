@@ -1,0 +1,6 @@
+.worktrees/
+bin/
+.claudecover.out
+tok
+.claude
+cover.out

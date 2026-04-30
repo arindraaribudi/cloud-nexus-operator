@@ -1,0 +1,10 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusClient
+metadata:
+  name: spoke-1
+  namespace: frp-system
+spec:
+  serverRef:
+    name: hub
+  admin:
+    port: 7400

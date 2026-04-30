@@ -1,0 +1,10 @@
+resources:
+- manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator
+  newTag: 1.0.12
+- name: controller
+  newName: controller
+  newTag: latest

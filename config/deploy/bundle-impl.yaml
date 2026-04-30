@@ -1,0 +1,43 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusClient
+metadata:
+  name: spoke-1
+  namespace: frp-system
+spec:
+  admin:
+    port: 7400
+  serverRef:
+    name: hub
+---
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: FrpProxy
+metadata:
+  name: my-ssh-tunnel
+  namespace: frp-system
+spec:
+  clientRef:
+    name: spoke-1
+  localIP: 127.0.0.1
+  localPort: 22
+  remotePort: 6000
+  type: tcp
+---
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusServer
+metadata:
+  name: hub
+  namespace: frp-system
+spec:
+  bindPort: 7000
+  replicas: 1
+  service:
+    type: LoadBalancer
+    ports:
+    - name: frp
+      port: 7000
+      protocol: TCP
+    # Expose one port per FrpProxy remotePort so the LoadBalancer routes
+    # tunnel traffic.  Add an entry here whenever you add a new FrpProxy.
+    - name: tunnel
+      port: 6000
+      protocol: TCP

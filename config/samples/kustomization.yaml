@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- tunnel_v1alpha1_nexusserver.yaml
+- tunnel_v1alpha1_nexusclient.yaml
+- tunnel_v1alpha1_frpproxy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

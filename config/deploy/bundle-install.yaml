@@ -1,0 +1,1172 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+    control-plane: controller-manager
+  name: frp-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: nexusclients.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: NexusClient
+    listKind: NexusClientList
+    plural: nexusclients
+    singular: frpclient
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.serverAddress
+      name: Server
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NexusClient is the Schema for the nexusclients API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: NexusClientSpec defines the desired state of NexusClient.
+            properties:
+              admin:
+                description: Admin configures the frpc local admin API (used for hot
+                  reload).
+                properties:
+                  port:
+                    default: 7400
+                    format: int32
+                    type: integer
+                  tokenSecret:
+                    description: |-
+                      TokenSecret is the secret containing the admin API bearer token.
+                      When nil, the operator creates a random token secret automatically.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the name of the Secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+              authTokenSecret:
+                description: |-
+                  AuthTokenSecret is the secret containing the auth token presented to frps.
+                  When nil, the operator inherits or creates a token automatically.
+                properties:
+                  key:
+                    description: Key is the key within the Secret.
+                    type: string
+                  name:
+                    description: Name is the name of the Secret.
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to frpc.toml.
+                type: string
+              image:
+                description: Image specifies the container image for frpc.
+                properties:
+                  repository:
+                    default: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
+                    type: string
+                  tag:
+                    default: 1.0.0
+                    type: string
+                type: object
+              serverRef:
+                description: ServerRef resolves the address of the NexusServer.
+                properties:
+                  address:
+                    description: Address is an explicit server host or IP (used when
+                      Name is empty).
+                    type: string
+                  name:
+                    description: |-
+                      Name references an NexusServer in the same namespace; the operator will
+                      look up its status.address and status.port.
+                    type: string
+                  port:
+                    description: Port is an explicit server port (used when Name is
+                      empty).
+                    format: int32
+                    type: integer
+                type: object
+            required:
+            - serverRef
+            type: object
+          status:
+            description: NexusClientStatus defines the observed state of NexusClient.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              phase:
+                description: Phase is the current lifecycle phase.
+                type: string
+              serverAddress:
+                description: ServerAddress is the resolved server address (host:port).
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: frpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: FrpProxy
+    listKind: FrpProxyList
+    plural: frpproxies
+    singular: frpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FrpProxy is the Schema for the frpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: FrpProxySpec defines the desired state of FrpProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              customDomains:
+                description: CustomDomains lists the virtual host domains (http/https).
+                items:
+                  type: string
+                type: array
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              remotePort:
+                description: RemotePort is the port exposed on the frps side (tcp/udp).
+                format: int32
+                type: integer
+              secretKey:
+                description: SecretKey is the shared secret for stcp/xtcp.
+                type: string
+              type:
+                description: Type is the tunnel type (tcp, udp, http, https, stcp,
+                  xtcp, tcpmux).
+                enum:
+                - tcp
+                - udp
+                - http
+                - https
+                - stcp
+                - xtcp
+                - tcpmux
+                type: string
+            required:
+            - clientRef
+            - localPort
+            - type
+            type: object
+          status:
+            description: FrpProxyStatus defines the observed state of FrpProxy.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: nexusservers.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: NexusServer
+    listKind: NexusServerList
+    plural: nexusservers
+    singular: frpserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.address
+      name: Address
+      type: string
+    - jsonPath: .status.port
+      name: Port
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NexusServer is the Schema for the nexusservers API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: NexusServerSpec defines the desired state of NexusServer.
+            properties:
+              authTokenSecret:
+                description: |-
+                  AuthTokenSecret is the secret containing the auth token frpc must present.
+                  When nil, the operator creates a random token secret automatically.
+                properties:
+                  key:
+                    description: Key is the key within the Secret.
+                    type: string
+                  name:
+                    description: Name is the name of the Secret.
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              bindPort:
+                default: 7000
+                format: int32
+                type: integer
+              dashboardPasswordSecret:
+                description: DashboardPasswordSecret is the secret containing the
+                  dashboard password. Optional.
+                properties:
+                  key:
+                    description: Key is the key within the Secret.
+                    type: string
+                  name:
+                    description: Name is the name of the Secret.
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              dashboardPort:
+                description: DashboardPort is the frps dashboard port. Optional.
+                format: int32
+                type: integer
+              dashboardUser:
+                description: DashboardUser is the username for the frps dashboard.
+                  Optional.
+                type: string
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to frps.toml.
+                type: string
+              image:
+                description: Image specifies the container image for frps.
+                properties:
+                  repository:
+                    default: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
+                    type: string
+                  tag:
+                    default: 1.0.0
+                    type: string
+                type: object
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              service:
+                description: Service describes the Kubernetes Service that exposes
+                  frps.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: Annotations are passed verbatim to the Service metadata.
+                    type: object
+                  ports:
+                    description: Ports defines the ports to expose.
+                    items:
+                      description: ServicePort contains information on service's port.
+                      properties:
+                        appProtocol:
+                          description: |-
+                            The application protocol for this port.
+                            This is used as a hint for implementations to offer richer behavior for protocols that they understand.
+                            This field follows standard Kubernetes label syntax.
+                            Valid values are either:
+
+                            * Un-prefixed protocol names - reserved for IANA standard service names (as per
+                            RFC-6335 and https://www.iana.org/assignments/service-names).
+
+                            * Kubernetes-defined prefixed names:
+                              * 'kubernetes.io/h2c' - HTTP/2 prior knowledge over cleartext as described in https://www.rfc-editor.org/rfc/rfc9113.html#name-starting-http-2-with-prior-
+                              * 'kubernetes.io/ws'  - WebSocket over cleartext as described in https://www.rfc-editor.org/rfc/rfc6455
+                              * 'kubernetes.io/wss' - WebSocket over TLS as described in https://www.rfc-editor.org/rfc/rfc6455
+
+                            * Other protocols should use implementation-defined prefixed names such as
+                            mycompany.com/my-custom-protocol.
+                          type: string
+                        name:
+                          description: |-
+                            The name of this port within the service. This must be a DNS_LABEL.
+                            All ports within a ServiceSpec must have unique names. When considering
+                            the endpoints for a Service, this must match the 'name' field in the
+                            EndpointPort.
+                            Optional if only one ServicePort is defined on this service.
+                          type: string
+                        nodePort:
+                          description: |-
+                            The port on each node on which this service is exposed when type is
+                            NodePort or LoadBalancer.  Usually assigned by the system. If a value is
+                            specified, in-range, and not in use it will be used, otherwise the
+                            operation will fail.  If not specified, a port will be allocated if this
+                            Service requires one.  If this field is specified when creating a
+                            Service which does not need it, creation will fail. This field will be
+                            wiped when updating a Service to no longer need it (e.g. changing type
+                            from NodePort to ClusterIP).
+                            More info: https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
+                          format: int32
+                          type: integer
+                        port:
+                          description: The port that will be exposed by this service.
+                          format: int32
+                          type: integer
+                        protocol:
+                          default: TCP
+                          description: |-
+                            The IP protocol for this port. Supports "TCP", "UDP", and "SCTP".
+                            Default is TCP.
+                          type: string
+                        targetPort:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: |-
+                            Number or name of the port to access on the pods targeted by the service.
+                            Number must be in the range 1 to 65535. Name must be an IANA_SVC_NAME.
+                            If this is a string, it will be looked up as a named port in the
+                            target Pod's container ports. If this is not specified, the value
+                            of the 'port' field is used (an identity map).
+                            This field is ignored for services with clusterIP=None, and should be
+                            omitted or set equal to the 'port' field.
+                            More info: https://kubernetes.io/docs/concepts/services-networking/service/#defining-a-service
+                          x-kubernetes-int-or-string: true
+                      required:
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: LoadBalancer
+                    description: Service Type string describes ingress methods for
+                      a service
+                    type: string
+                type: object
+              vhostHTTPPort:
+                description: VhostHTTPPort is the port for HTTP virtual host. Optional.
+                format: int32
+                type: integer
+              vhostHTTPSPort:
+                description: VhostHTTPSPort is the port for HTTPS virtual host. Optional.
+                format: int32
+                type: integer
+            type: object
+          status:
+            description: NexusServerStatus defines the observed state of NexusServer.
+            properties:
+              address:
+                description: Address is the external IP or hostname of the frps Service.
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              phase:
+                description: Phase is the current lifecycle phase.
+                type: string
+              port:
+                description: Port is the bind port of frps.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-controller-manager
+  namespace: frp-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-leader-election-role
+  namespace: frp-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpclient-admin-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients
+  verbs:
+  - '*'
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpclient-editor-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpclient-viewer-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpproxy-admin-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies
+  verbs:
+  - '*'
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpproxy-editor-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpproxy-viewer-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - frpproxies/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpserver-admin-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers
+  verbs:
+  - '*'
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpserver-editor-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-frpserver-viewer-role
+rules:
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusservers/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloud-nexus-operator-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients
+  - frpproxies
+  - nexusservers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients/finalizers
+  - frpproxies/finalizers
+  - nexusservers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients/status
+  - frpproxies/status
+  - nexusservers/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloud-nexus-operator-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloud-nexus-operator-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-leader-election-rolebinding
+  namespace: frp-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloud-nexus-operator-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: cloud-nexus-operator-controller-manager
+  namespace: frp-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+  name: cloud-nexus-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloud-nexus-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: cloud-nexus-operator-controller-manager
+  namespace: frp-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cloud-nexus-operator-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloud-nexus-operator-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: cloud-nexus-operator-controller-manager
+  namespace: frp-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+    control-plane: controller-manager
+  name: cloud-nexus-operator-controller-manager-metrics-service
+  namespace: frp-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: cloud-nexus-operator
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: cloud-nexus-operator
+    control-plane: controller-manager
+  name: cloud-nexus-operator-controller-manager
+  namespace: frp-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloud-nexus-operator
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: cloud-nexus-operator
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        command:
+        - /manager
+        image: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator:1.0.0
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports: []
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts: []
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: cloud-nexus-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes: []

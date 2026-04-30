@@ -1,0 +1,36 @@
+ARG FRP_VERSION=v0.68.1
+
+FROM golang:1.25-alpine AS builder
+ARG FRP_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN apk add --no-cache git
+WORKDIR /build
+RUN git clone --depth 1 --branch ${FRP_VERSION} https://github.com/fatedier/frp .
+# Build frps without the web dashboard (we don't configure WebServer port).
+# The 'noweb' build tag disables web/frps/embed.go so no Node.js build is needed.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
+    go build -trimpath -ldflags="-s -w" -tags noweb -o frps ./cmd/frps
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
+    go build -trimpath -ldflags="-s -w" -tags noweb -o frpc ./cmd/frpc
+
+FROM golang:1.25-alpine AS proxy-builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY api/ ./api/
+COPY internal/ ./internal/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} \
+    go build -trimpath -ldflags="-s -w" -o /registry-proxy ./cmd/registry-proxy
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /build/frps /frps
+COPY --from=builder /build/frpc /frpc
+COPY --from=proxy-builder /registry-proxy /registry-proxy
+# No ENTRYPOINT/CMD — controllers set explicit Command per role
+EXPOSE 7000 7400 80 443 7500

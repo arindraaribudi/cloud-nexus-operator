@@ -1,0 +1,12 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: FrpProxy
+metadata:
+  name: my-ssh-tunnel
+  namespace: frp-system
+spec:
+  clientRef:
+    name: spoke-1
+  type: tcp
+  localIP: 127.0.0.1
+  localPort: 22
+  remotePort: 6000

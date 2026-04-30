@@ -1,0 +1,15 @@
+# Service that exposes the frps-webhook server endpoint.
+# frps calls POST /frps/events when proxies connect/disconnect.
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-manager-frps-plugin
+  namespace: system
+spec:
+  selector:
+    app: frps-webhook
+  ports:
+    - name: frps-plugin
+      port: 9090
+      targetPort: 9090
+      protocol: TCP

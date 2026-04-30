@@ -1,0 +1,14 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: FrpProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: frpproxy-sample
+spec:
+  clientRef:
+    name: frpclient-sample
+  type: tcp
+  localIP: 127.0.0.1
+  localPort: 22
+  remotePort: 6000

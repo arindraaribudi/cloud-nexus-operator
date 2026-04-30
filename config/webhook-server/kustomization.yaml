@@ -1,0 +1,9 @@
+resources:
+- service_account.yaml
+- cluster_role.yaml
+- cluster_role_binding.yaml
+- deployment.yaml
+
+images:
+- name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
+  newTag: "1.0.0"
