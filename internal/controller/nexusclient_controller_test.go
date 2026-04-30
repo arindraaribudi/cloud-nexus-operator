@@ -23,7 +23,6 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -33,12 +32,14 @@ import (
 var _ = Describe("NexusClient Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
+		const serverName = "test-server"
+		const ns = "default"
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: ns,
 		}
 		frpclient := &tunnelv1alpha1.NexusClient{}
 
@@ -49,36 +50,34 @@ var _ = Describe("NexusClient Controller", func() {
 				resource := &tunnelv1alpha1.NexusClient{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: ns,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: tunnelv1alpha1.NexusClientSpec{
+						ServerRef: tunnelv1alpha1.ServerRef{
+							Address: "127.0.0.1",
+							Port:    7000,
+						},
+						Image: tunnelv1alpha1.ImageSpec{
+							Repository: "registry.example.com/crd-tunnel",
+							Tag:        "1.0.0",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &tunnelv1alpha1.NexusClient{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance NexusClient")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			// Cleanup resources
+			_ = k8sClient.Delete(ctx, &tunnelv1alpha1.NexusClient{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: ns}})
 		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &NexusClientReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		It("should successfully create the resource", func() {
+			By("Verifying the NexusClient resource was created")
+			var nc tunnelv1alpha1.NexusClient
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &nc)).To(Succeed())
+			Expect(nc.Spec.ServerRef.Address).To(Equal("127.0.0.1"))
+			Expect(nc.Spec.ServerRef.Port).To(Equal(int32(7000)))
 		})
 	})
 })

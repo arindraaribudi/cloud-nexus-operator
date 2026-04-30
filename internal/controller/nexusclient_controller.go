@@ -39,6 +39,11 @@ import (
 	"tunnel.io/cloud-nexus-operator/internal/config"
 )
 
+const (
+	// phaseRunning represents the Running phase for NexusClient status.
+	phaseRunning = "Running"
+)
+
 // NexusClientReconciler reconciles a NexusClient object.
 type NexusClientReconciler struct {
 	client.Client
@@ -111,7 +116,7 @@ func (r *NexusClientReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Update status.
 	updated := spoke.DeepCopy()
-	updated.Status.Phase = "Running"
+	updated.Status.Phase = phaseRunning
 	updated.Status.ServerAddress = fmt.Sprintf("%s:%d", serverAddr, serverPort)
 	if err := r.Status().Update(ctx, updated); err != nil && !errors.IsConflict(err) {
 		return ctrl.Result{}, err
@@ -305,6 +310,18 @@ func (r *NexusClientReconciler) reconcileAdminService(ctx context.Context, spoke
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NexusClientReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Index FrpProxy by spec.clientRef.name for efficient listing.
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(),
+		&tunnelv1alpha1.FrpProxy{},
+		"spec.clientRef.name",
+		func(rawObj client.Object) []string {
+			proxy := rawObj.(*tunnelv1alpha1.FrpProxy)
+			return []string{proxy.Spec.ClientRef.Name}
+		},
+	); err != nil {
+		return err
+	}
+
 	// Watches FrpProxy changes so the ConfigMap stays in sync when proxies are added/removed.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tunnelv1alpha1.NexusClient{}).

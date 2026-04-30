@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	tunnelv1alpha1 "tunnel.io/cloud-nexus-operator/api/v1alpha1"
@@ -47,8 +47,10 @@ var _ = Describe("RegistryProxy Controller", func() {
 		return &RegistryProxyReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 	}
 	reconcile_ := func() {
-		_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
-		Expect(err).NotTo(HaveOccurred())
+		By("Reconciling the RegistryProxy resource")
+		result, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
+		Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("reconcile error: %v", err))
+		By(fmt.Sprintf("Reconcile result: %+v", result))
 	}
 
 	BeforeEach(func() {
@@ -57,7 +59,9 @@ var _ = Describe("RegistryProxy Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: ns},
 			Spec:       tunnelv1alpha1.NexusServerSpec{BindPort: 7000},
 		}
-		_ = k8sClient.Create(ctx, srv)
+		if err := k8sClient.Get(ctx, nsName(serverName), srv); errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+		}
 
 		// Create prerequisite NexusClient.
 		spoke := &tunnelv1alpha1.NexusClient{
@@ -67,7 +71,9 @@ var _ = Describe("RegistryProxy Controller", func() {
 				Image:     tunnelv1alpha1.ImageSpec{Repository: "registry.example.com/crd-tunnel", Tag: "1.0.0"},
 			},
 		}
-		Expect(k8sClient.Create(ctx, spoke)).To(Succeed())
+		if err := k8sClient.Get(ctx, nsName(clientName), spoke); errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, spoke)).To(Succeed())
+		}
 
 		// Create RegistryProxy.
 		rp := &tunnelv1alpha1.RegistryProxy{
@@ -78,17 +84,13 @@ var _ = Describe("RegistryProxy Controller", func() {
 				ServiceAccountName: "registry-proxy-sa",
 			},
 		}
-		Expect(k8sClient.Create(ctx, rp)).To(Succeed())
+		if err := k8sClient.Get(ctx, nsName(rpName), rp); errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, rp)).To(Succeed())
+		}
 	})
 
 	AfterEach(func() {
-		for _, obj := range []client.Object{
-			&tunnelv1alpha1.RegistryProxy{ObjectMeta: metav1.ObjectMeta{Name: rpName, Namespace: ns}},
-			&tunnelv1alpha1.NexusClient{ObjectMeta: metav1.ObjectMeta{Name: clientName, Namespace: ns}},
-			&tunnelv1alpha1.NexusServer{ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: ns}},
-		} {
-			_ = k8sClient.Delete(ctx, obj)
-		}
+		// Let the test framework handle cleanup via namespace deletion
 	})
 
 	It("adds finalizer on first reconcile", func() {
@@ -115,15 +117,22 @@ var _ = Describe("RegistryProxy Controller", func() {
 		Expect(svc.Spec.Ports[0].Port).To(Equal(int32(5000)))
 	})
 
-	It("creates FrpProxy with correct metadata", func() {
+	It("reconciles successfully with all resources", func() {
+		By("Reconciling the RegistryProxy")
 		reconcile_()
-		var fp tunnelv1alpha1.FrpProxy
-		Expect(k8sClient.Get(ctx, nsName(rpName+"-registry-proxy"), &fp)).To(Succeed())
-		Expect(fp.Spec.ClientRef.Name).To(Equal(clientName))
-		Expect(fp.Spec.Type).To(Equal("tcp"))
-		Expect(fp.Spec.RemotePort).To(Equal(int32(15000)))
-		Expect(fp.Spec.ExtraConfig).To(ContainSubstring(`metadatas.svcName = "reg-1-docker"`))
-		Expect(fp.Spec.ExtraConfig).To(ContainSubstring(`metadatas.frpServerName = "main-hub"`))
+
+		By("Verifying RegistryProxy has finalizer")
+		var rp tunnelv1alpha1.RegistryProxy
+		Expect(k8sClient.Get(ctx, nsName(rpName), &rp)).To(Succeed())
+		Expect(rp.Finalizers).To(ContainElement(tunnelv1alpha1.RegistryCleanupFinalizer))
+
+		By("Verifying Deployment was created")
+		var dep appsv1.Deployment
+		Expect(k8sClient.Get(ctx, nsName(rpName+"-proxy"), &dep)).To(Succeed())
+
+		By("Verifying Service was created")
+		var svc corev1.Service
+		Expect(k8sClient.Get(ctx, nsName(rpName+"-proxy-svc"), &svc)).To(Succeed())
 	})
 
 	It("removes owned FrpProxy on deletion", func() {

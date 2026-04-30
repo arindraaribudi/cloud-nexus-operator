@@ -51,7 +51,11 @@ var _ = Describe("FrpProxy Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: tunnelv1alpha1.FrpProxySpec{
+						ClientRef: tunnelv1alpha1.LocalObjectRef{Name: "test-client"},
+						Type:      "tcp",
+						LocalPort: 8080,
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
