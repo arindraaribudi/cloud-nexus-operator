@@ -44,7 +44,7 @@ func TestReload_Success(t *testing.T) {
 	if _, err := fmt.Sscanf(addr, "%s", &addr); err == nil {
 		parts := strings.Split(addr, ":")
 		host = parts[0]
-		fmt.Sscanf(parts[1], "%d", &port)
+		_, _ = fmt.Sscanf(parts[1], "%d", &port)
 	}
 
 	c := reload.New(srv.Client())
@@ -73,7 +73,7 @@ func TestReload_NonOKStatus(t *testing.T) {
 	parts := strings.Split(addr, ":")
 	host := parts[0]
 	var port int32
-	fmt.Sscanf(parts[1], "%d", &port)
+	_, _ = fmt.Sscanf(parts[1], "%d", &port)
 
 	c := reload.New(srv.Client())
 	err := c.Reload(context.Background(), host, port, "")

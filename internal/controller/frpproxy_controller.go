@@ -113,7 +113,7 @@ func (r *FrpProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return result, nil
 	}
 
-	return ctrl.Result{}, r.setStatus(ctx, &proxy, "Running", "")
+	return ctrl.Result{}, r.setStatus(ctx, &proxy, phaseRunning, "")
 }
 
 // rebuildAndReload re-renders the full frpc.toml for the parent client,
@@ -304,11 +304,11 @@ func (r *FrpProxyReconciler) setStatus(ctx context.Context, proxy *tunnelv1alpha
 	updated := proxy.DeepCopy()
 	updated.Status.Phase = phase
 	now := metav1.Now()
-	if phase == "Running" {
+	if phase == phaseRunning {
 		updated.Status.LastReloadTime = &now
 	}
 	condStatus := metav1.ConditionTrue
-	if phase != "Running" {
+	if phase != phaseRunning {
 		condStatus = metav1.ConditionFalse
 	}
 	cond := metav1.Condition{
@@ -318,7 +318,7 @@ func (r *FrpProxyReconciler) setStatus(ctx context.Context, proxy *tunnelv1alpha
 		Message:            msg,
 		LastTransitionTime: now,
 	}
-	if phase != "Running" {
+	if phase != phaseRunning {
 		cond.Reason = "ReloadFailed"
 	}
 	// Update or append condition.

@@ -34,12 +34,12 @@ import (
 	"tunnel.io/cloud-nexus-operator/internal/webhook"
 )
 
-func newHandler(t *testing.T) (*webhook.FrpsEventHandler, *runtime.Scheme) {
+func newHandler(t *testing.T) *webhook.FrpsEventHandler {
 	t.Helper()
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).Build()
-	return webhook.NewFrpsEventHandler(c, nil), s
+	return webhook.NewFrpsEventHandler(c, nil)
 }
 
 func postEvent(t *testing.T, h *webhook.FrpsEventHandler, body map[string]any) *httptest.ResponseRecorder {
@@ -53,7 +53,7 @@ func postEvent(t *testing.T, h *webhook.FrpsEventHandler, body map[string]any) *
 }
 
 func TestFrpsEventHandler_NewProxy_CreatesService(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler(t)
 	rr := postEvent(t, h, map[string]any{
 		"version": "0.1.0",
 		"op":      "NewProxy",
@@ -102,7 +102,7 @@ func TestFrpsEventHandler_NewProxy_CreatesService(t *testing.T) {
 }
 
 func TestFrpsEventHandler_CloseProxy_DeletesService(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler(t)
 
 	// Pre-create a Service.
 	existing := &corev1.Service{
@@ -141,7 +141,7 @@ func TestFrpsEventHandler_CloseProxy_DeletesService(t *testing.T) {
 }
 
 func TestFrpsEventHandler_NoSvcName_Passthrough(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler(t)
 	rr := postEvent(t, h, map[string]any{
 		"version": "0.1.0",
 		"op":      "NewProxy",

@@ -53,7 +53,9 @@ func (c *Client) Reload(ctx context.Context, host string, port int32, token stri
 	if err != nil {
 		return fmt.Errorf("reload request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("reload returned HTTP %d", resp.StatusCode)

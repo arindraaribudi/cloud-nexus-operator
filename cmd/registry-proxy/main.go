@@ -125,15 +125,14 @@ func parseUpstream(path string) (host, rest string, ok bool) {
 	if trimmed == "" || trimmed == path {
 		return "", "", false
 	}
-	idx := strings.Index(trimmed, "/")
-	if idx < 0 {
+	candidate, remainder, found := strings.Cut(trimmed, "/")
+	if !found {
 		return "", "", false
 	}
-	candidate := trimmed[:idx]
 	if !strings.Contains(candidate, ".") {
 		return "", "", false
 	}
-	return candidate, trimmed[idx+1:], true
+	return candidate, remainder, true
 }
 
 // authScheme returns "gcp", "ecr", or "" depending on the upstream host.

@@ -72,6 +72,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	//nolint:staticcheck
 	recorder := mgr.GetEventRecorderFor("frps-webhook")
 	if err := mgr.Add(webhook.NewHTTPServer(":9090", directClient, recorder)); err != nil {
 		setupLog.Error(err, "Failed to register frps plugin webhook server")
