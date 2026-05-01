@@ -1,0 +1,30 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: HTTPProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: httpproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient in this namespace
+
+  # --- Local service (required) ---
+  localPort: 8080                # port of the local HTTP service on the spoke side
+
+  # --- Local IP (optional) ---
+  # localIP: 127.0.0.1           # default; IP of the local service
+
+  # --- Remote port (optional; frps routes by virtual host, not port) ---
+  # remotePort: 0                # rarely needed; frps uses vhostHTTPPort for routing
+
+  # --- Virtual host routing (use customDomains OR subdomain, not both) ---
+  customDomains:
+    - app.example.com            # fully-qualified domain routed to this proxy
+  # subdomain: myapp             # alternative: subdomain prefix (requires frps subdomain routing)
+
+  # --- Raw TOML appended verbatim to this proxy block (optional) ---
+  # extraConfig: |
+  #   hostHeaderRewrite = "app.internal.example.com"
+  #   requestHeaders.set.x-from-frp = "true"
