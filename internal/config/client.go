@@ -20,9 +20,33 @@ import (
 	"bytes"
 	"fmt"
 	"text/template"
-
-	tunnelv1alpha1 "tunnel.io/cloud-nexus-operator/api/v1alpha1"
 )
+
+// BaseParams holds the frpc base configuration for TOML rendering.
+type BaseParams struct {
+	ServerAddr  string
+	ServerPort  int32
+	AuthToken   string
+	AdminPort   int32
+	AdminToken  string
+	ExtraConfig string
+}
+
+// ProxyParams holds all per-proxy fields for TOML rendering.
+// Each typed proxy CRD populates only the fields relevant to its type.
+type ProxyParams struct {
+	Name          string
+	Type          string
+	LocalIP       string
+	LocalPort     int32
+	RemotePort    int32
+	CustomDomains []string
+	SecretKey     string
+	Subdomain     string
+	AllowUsers    []string
+	Multiplexer   string
+	ExtraConfig   string
+}
 
 var frpcBaseTemplate = template.Must(template.New("frpc-base").Parse(`serverAddr = "{{ .ServerAddr }}"
 serverPort = {{ .ServerPort }}
@@ -54,78 +78,34 @@ remotePort = {{ .RemotePort }}
 {{- if .CustomDomains }}
 customDomains = [{{ range $i, $d := .CustomDomains }}{{if $i}}, {{end}}"{{ $d }}"{{end}}]
 {{- end }}
+{{- if .Subdomain }}
+subdomain = "{{ .Subdomain }}"
+{{- end }}
 {{- if .SecretKey }}
 secretKey = "{{ .SecretKey }}"
+{{- end }}
+{{- if .AllowUsers }}
+allowUsers = [{{ range $i, $u := .AllowUsers }}{{if $i}}, {{end}}"{{ $u }}"{{end}}]
+{{- end }}
+{{- if .Multiplexer }}
+multiplexer = "{{ .Multiplexer }}"
 {{- end }}
 {{ .ExtraConfig }}
 `))
 
-type frpcBaseData struct {
-	ServerAddr  string
-	ServerPort  int32
-	AuthToken   string
-	AdminPort   int32
-	AdminToken  string
-	ExtraConfig string
-}
-
-type frpcProxyData struct {
-	Name          string
-	Type          string
-	LocalIP       string
-	LocalPort     int32
-	RemotePort    int32
-	CustomDomains []string
-	SecretKey     string
-	ExtraConfig   string
-}
-
-// RenderFrpcToml renders the full frpc.toml from the client spec and a list of proxies.
-// serverAddr and serverPort are the resolved server coordinates.
-// authToken and adminToken are the resolved secret values.
-func RenderFrpcToml(
-	spec tunnelv1alpha1.NexusClientSpec,
-	serverAddr string, serverPort int32,
-	authToken, adminToken string,
-	proxies []tunnelv1alpha1.FrpProxy,
-) (string, error) {
-	adminPort := spec.Admin.Port
-	if adminPort == 0 {
-		adminPort = 7400
-	}
-
-	base := frpcBaseData{
-		ServerAddr:  serverAddr,
-		ServerPort:  serverPort,
-		AuthToken:   authToken,
-		AdminPort:   adminPort,
-		AdminToken:  adminToken,
-		ExtraConfig: spec.ExtraConfig,
-	}
-
+// RenderFrpcToml renders the full frpc.toml from base config and a list of proxy params.
+func RenderFrpcToml(base BaseParams, proxies []ProxyParams) (string, error) {
 	var buf bytes.Buffer
 	if err := frpcBaseTemplate.Execute(&buf, base); err != nil {
 		return "", fmt.Errorf("render frpc base: %w", err)
 	}
-
 	for _, p := range proxies {
-		pdata := frpcProxyData{
-			Name:          p.Name,
-			Type:          p.Spec.Type,
-			LocalIP:       p.Spec.LocalIP,
-			LocalPort:     p.Spec.LocalPort,
-			RemotePort:    p.Spec.RemotePort,
-			CustomDomains: p.Spec.CustomDomains,
-			SecretKey:     p.Spec.SecretKey,
-			ExtraConfig:   p.Spec.ExtraConfig,
+		if p.LocalIP == "" {
+			p.LocalIP = "127.0.0.1"
 		}
-		if pdata.LocalIP == "" {
-			pdata.LocalIP = "127.0.0.1"
-		}
-		if err := frpcProxyTemplate.Execute(&buf, pdata); err != nil {
-			return "", fmt.Errorf("render proxy block: %w", err)
+		if err := frpcProxyTemplate.Execute(&buf, p); err != nil {
+			return "", fmt.Errorf("render proxy block %q: %w", p.Name, err)
 		}
 	}
-
 	return buf.String(), nil
 }

@@ -92,13 +92,34 @@ func (r *NexusClientReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Include current proxies so the ConfigMap is always complete.
-	activeProxies, err := r.listActiveProxies(ctx, &spoke)
+	activeProxiesOld, err := r.listActiveProxies(ctx, &spoke)
 	if err != nil {
 		log.Error(err, "failed to list proxies")
 		return ctrl.Result{}, err
 	}
-
-	toml, err := config.RenderFrpcToml(spoke.Spec, serverAddr, serverPort, authToken, adminToken, activeProxies)
+	proxyParams := make([]config.ProxyParams, 0, len(activeProxiesOld))
+	for _, p := range activeProxiesOld {
+		localIP := p.Spec.LocalIP
+		if localIP == "" {
+			localIP = "127.0.0.1"
+		}
+		proxyParams = append(proxyParams, config.ProxyParams{
+			Name: p.Name, Type: p.Spec.Type, LocalIP: localIP,
+			LocalPort: p.Spec.LocalPort, RemotePort: p.Spec.RemotePort,
+			CustomDomains: p.Spec.CustomDomains, SecretKey: p.Spec.SecretKey,
+			ExtraConfig: p.Spec.ExtraConfig,
+		})
+	}
+	adminPort := spoke.Spec.Admin.Port
+	if adminPort == 0 {
+		adminPort = 7400
+	}
+	base := config.BaseParams{
+		ServerAddr: serverAddr, ServerPort: serverPort,
+		AuthToken: authToken, AdminPort: adminPort,
+		AdminToken: adminToken, ExtraConfig: spoke.Spec.ExtraConfig,
+	}
+	toml, err := config.RenderFrpcToml(base, proxyParams)
 	if err != nil {
 		log.Error(err, "failed to render frpc.toml")
 		return ctrl.Result{}, err

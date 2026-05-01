@@ -1,104 +1,128 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package config_test
 
 import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	tunnelv1alpha1 "tunnel.io/cloud-nexus-operator/api/v1alpha1"
 	"tunnel.io/cloud-nexus-operator/internal/config"
 )
 
 func TestRenderFrpcToml_BaseConfig(t *testing.T) {
-	spec := tunnelv1alpha1.NexusClientSpec{
-		Admin: tunnelv1alpha1.AdminSpec{Port: 7400},
+	base := config.BaseParams{
+		ServerAddr: "10.0.0.1",
+		ServerPort: 7000,
+		AuthToken:  "token123",
+		AdminPort:  7400,
+		AdminToken: "admintoken",
 	}
-	out, err := config.RenderFrpcToml(spec, "10.0.0.1", 7000, "token123", "admintoken", nil)
+	out, err := config.RenderFrpcToml(base, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out, `serverAddr = "10.0.0.1"`) {
-		t.Errorf("expected serverAddr in output, got:\n%s", out)
+		t.Errorf("expected serverAddr, got:\n%s", out)
 	}
 	if !strings.Contains(out, "serverPort = 7000") {
-		t.Errorf("expected serverPort in output, got:\n%s", out)
+		t.Errorf("expected serverPort, got:\n%s", out)
 	}
 	if !strings.Contains(out, `auth.token = "token123"`) {
-		t.Errorf("expected auth.token in output, got:\n%s", out)
+		t.Errorf("expected auth.token, got:\n%s", out)
 	}
 	if !strings.Contains(out, "webServer.port = 7400") {
-		t.Errorf("expected webServer.port in output, got:\n%s", out)
+		t.Errorf("expected webServer.port, got:\n%s", out)
 	}
 }
 
 func TestRenderFrpcToml_WithTCPProxy(t *testing.T) {
-	spec := tunnelv1alpha1.NexusClientSpec{}
-	proxies := []tunnelv1alpha1.FrpProxy{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "my-ssh-tunnel"},
-			Spec: tunnelv1alpha1.FrpProxySpec{
-				ClientRef:  tunnelv1alpha1.LocalObjectRef{Name: "spoke-1"},
-				Type:       "tcp",
-				LocalPort:  22,
-				RemotePort: 6000,
-			},
-		},
+	base := config.BaseParams{ServerAddr: "server.example.com", ServerPort: 7000}
+	proxies := []config.ProxyParams{
+		{Name: "my-ssh-tunnel", Type: "tcp", LocalIP: "127.0.0.1", LocalPort: 22, RemotePort: 6000},
 	}
-	out, err := config.RenderFrpcToml(spec, "server.example.com", 7000, "", "", proxies)
+	out, err := config.RenderFrpcToml(base, proxies)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out, `[[proxies]]`) {
-		t.Errorf("expected proxy block in output, got:\n%s", out)
+		t.Errorf("expected proxy block, got:\n%s", out)
 	}
 	if !strings.Contains(out, `name = "my-ssh-tunnel"`) {
-		t.Errorf("expected proxy name in output, got:\n%s", out)
+		t.Errorf("expected proxy name, got:\n%s", out)
 	}
 	if !strings.Contains(out, `type = "tcp"`) {
-		t.Errorf("expected type tcp in output, got:\n%s", out)
+		t.Errorf("expected type tcp, got:\n%s", out)
 	}
 	if !strings.Contains(out, "localPort = 22") {
-		t.Errorf("expected localPort in output, got:\n%s", out)
+		t.Errorf("expected localPort, got:\n%s", out)
 	}
 	if !strings.Contains(out, "remotePort = 6000") {
-		t.Errorf("expected remotePort in output, got:\n%s", out)
+		t.Errorf("expected remotePort, got:\n%s", out)
 	}
 }
 
 func TestRenderFrpcToml_WithHTTPProxy(t *testing.T) {
-	spec := tunnelv1alpha1.NexusClientSpec{}
-	proxies := []tunnelv1alpha1.FrpProxy{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "my-http-proxy"},
-			Spec: tunnelv1alpha1.FrpProxySpec{
-				ClientRef:     tunnelv1alpha1.LocalObjectRef{Name: "spoke-1"},
-				Type:          "http",
-				LocalPort:     8080,
-				CustomDomains: []string{"app.example.com"},
-			},
-		},
+	base := config.BaseParams{ServerAddr: "server.example.com", ServerPort: 7000}
+	proxies := []config.ProxyParams{
+		{Name: "my-http-proxy", Type: "http", LocalIP: "127.0.0.1", LocalPort: 8080,
+			CustomDomains: []string{"app.example.com"}},
 	}
-	out, err := config.RenderFrpcToml(spec, "server.example.com", 7000, "", "", proxies)
+	out, err := config.RenderFrpcToml(base, proxies)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out, `customDomains = ["app.example.com"]`) {
-		t.Errorf("expected customDomains in output, got:\n%s", out)
+		t.Errorf("expected customDomains, got:\n%s", out)
+	}
+}
+
+func TestRenderFrpcToml_WithSTCPProxy(t *testing.T) {
+	base := config.BaseParams{ServerAddr: "server.example.com", ServerPort: 7000}
+	proxies := []config.ProxyParams{
+		{Name: "my-stcp", Type: "stcp", LocalIP: "127.0.0.1", LocalPort: 8080,
+			SecretKey: "s3cr3t", AllowUsers: []string{"visitor1"}},
+	}
+	out, err := config.RenderFrpcToml(base, proxies)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `secretKey = "s3cr3t"`) {
+		t.Errorf("expected secretKey, got:\n%s", out)
+	}
+	if !strings.Contains(out, `allowUsers = ["visitor1"]`) {
+		t.Errorf("expected allowUsers, got:\n%s", out)
+	}
+}
+
+func TestRenderFrpcToml_WithTCPMuxProxy(t *testing.T) {
+	base := config.BaseParams{ServerAddr: "server.example.com", ServerPort: 7000}
+	proxies := []config.ProxyParams{
+		{Name: "my-tcpmux", Type: "tcpmux", LocalIP: "127.0.0.1", LocalPort: 8080,
+			Multiplexer: "httpconnect", CustomDomains: []string{"mux.example.com"}},
+	}
+	out, err := config.RenderFrpcToml(base, proxies)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `multiplexer = "httpconnect"`) {
+		t.Errorf("expected multiplexer, got:\n%s", out)
+	}
+}
+
+func TestRenderFrpcToml_MultipleArrayElements(t *testing.T) {
+	base := config.BaseParams{ServerAddr: "s.example.com", ServerPort: 7000}
+	proxies := []config.ProxyParams{
+		{Name: "multi-http", Type: "http", LocalIP: "127.0.0.1", LocalPort: 8080,
+			CustomDomains: []string{"a.example.com", "b.example.com"}},
+		{Name: "multi-stcp", Type: "stcp", LocalIP: "127.0.0.1", LocalPort: 9090,
+			SecretKey: "k", AllowUsers: []string{"alice", "bob"}},
+	}
+	out, err := config.RenderFrpcToml(base, proxies)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, `"a.example.com", "b.example.com"`) {
+		t.Errorf("expected two customDomains, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"alice", "bob"`) {
+		t.Errorf("expected two allowUsers, got:\n%s", out)
 	}
 }
