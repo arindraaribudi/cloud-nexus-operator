@@ -1,0 +1,29 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: TCPMuxProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: tcpmuxproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient in this namespace
+
+  # --- Local service (required) ---
+  localPort: 8080                # port of the local service on the spoke side
+
+  # --- Local IP (optional) ---
+  # localIP: 127.0.0.1           # default; IP of the local service
+
+  # --- Virtual host routing ---
+  customDomains:
+    - proxy.example.com          # domain matched for HTTP CONNECT multiplexing
+  # subdomain: myproxy           # alternative: subdomain prefix
+
+  # --- Multiplexer type (optional) ---
+  multiplexer: httpconnect       # default; "httpconnect" is the only supported value
+
+  # --- Raw TOML appended verbatim to this proxy block (optional) ---
+  # extraConfig: |
+  #   # additional frp TOML for this proxy block
