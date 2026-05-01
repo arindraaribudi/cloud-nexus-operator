@@ -35,6 +35,16 @@ import (
 	"tunnel.io/cloud-nexus-operator/internal/reload"
 )
 
+const (
+	requeueDelay = 10 * time.Second
+	// configSyncDelay is how long we wait after writing a ConfigMap before
+	// reloading frpc so that rapid proxy changes are batched.
+	configSyncDelay = 30 * time.Second
+	// configSyncAnnotation records the UTC time at which the frpc ConfigMap
+	// was last written, so the reconciler can debounce reloads.
+	configSyncAnnotation = "tunnel.io/config-updated-at"
+)
+
 // BaseProxyReconciler contains the common reconcile logic for all 8 typed proxy CRDs.
 type BaseProxyReconciler struct {
 	client.Client
