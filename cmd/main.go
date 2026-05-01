@@ -193,12 +193,31 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "NexusClient")
 		os.Exit(1)
 	}
-	if err := (&controller.FrpProxyReconciler{
+	// Register field indexers for all 8 typed proxy CRDs.
+	if err := controller.RegisterProxyIndexers(mgr); err != nil {
+		setupLog.Error(err, "Failed to register proxy field indexers")
+		os.Exit(1)
+	}
+
+	base := controller.BaseProxyReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "FrpProxy")
-		os.Exit(1)
+	}
+
+	for _, setup := range []func(ctrl.Manager) error{
+		(&controller.TCPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.UDPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.HTTPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.HTTPSProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.TCPMuxProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.STCPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.XTCPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+		(&controller.SUDPProxyReconciler{BaseProxyReconciler: base}).SetupWithManager,
+	} {
+		if err := setup(mgr); err != nil {
+			setupLog.Error(err, "Failed to create typed proxy controller")
+			os.Exit(1)
+		}
 	}
 	if err := (&controller.RegistryProxyReconciler{
 		Client: mgr.GetClient(),
