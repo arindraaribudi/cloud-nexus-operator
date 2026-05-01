@@ -1,0 +1,25 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: RegistryProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: registryproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient in this namespace
+
+  # --- Hub-side port (required) ---
+  remotePort: 15000              # port frps exposes on the hub side for registry traffic
+
+  # --- Cloud auth service account (required) ---
+  serviceAccountName: registry-proxy-sa  # SA annotated with Workload Identity (GKE) or IRSA (EKS)
+
+  # --- Proxy listener port (optional) ---
+  # proxyPort: 5000              # default; port the registry-proxy binary listens on inside the Pod
+
+  # --- Image override (optional; defaults to the image used by the referenced NexusClient) ---
+  # image:
+  #   repository: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
+  #   tag: "1.0.0"
