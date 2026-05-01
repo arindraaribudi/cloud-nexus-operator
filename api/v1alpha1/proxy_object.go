@@ -36,6 +36,7 @@ type ProxyStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+// +kubebuilder:object:generate=false
 
 // ProxyObject is implemented by all 8 typed proxy CRDs.
 // It allows BaseProxyReconciler to operate generically over all proxy types.
