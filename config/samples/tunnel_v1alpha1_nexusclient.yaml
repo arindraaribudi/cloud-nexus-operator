@@ -6,7 +6,31 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: nexusclient-sample
 spec:
+  # --- Image ---
+  # image:
+  #   repository: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel  # default
+  #   tag: "1.0.0"                                                                       # default
+
+  # --- Server reference (required; use 'name' OR 'address'+'port', not both) ---
   serverRef:
-    name: nexusserver-sample
+    name: nexusserver-sample     # name of a NexusServer in this namespace
+    # address: ""                # alternative: explicit frps host / IP
+    # port: 0                    # alternative: explicit frps port
+
+  # --- Auth token (nil = operator inherits from NexusServer or auto-creates) ---
+  # authTokenSecret:
+  #   name: nexusclient-auth-secret
+  #   key: token
+
+  # --- Admin API (used by the operator for hot-reload of proxy configs) ---
   admin:
-    port: 7400
+    port: 7400                   # default; local admin API port inside the frpc pod
+    # tokenSecret:               # nil = operator auto-creates a random token
+    #   name: nexusclient-admin-secret
+    #   key: token
+
+  # --- Raw TOML appended verbatim to frpc.toml ---
+  # extraConfig: |
+  #   [log]
+  #   to = "console"
+  #   level = "info"
