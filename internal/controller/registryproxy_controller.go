@@ -49,7 +49,7 @@ type RegistryProxyReconciler struct {
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/finalizers,verbs=update
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=tcpproxies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -119,7 +119,7 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileProxyService(ctx, &rp, proxyPort); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcileFrpProxy(ctx, &rp, proxyPort, frpServerName); err != nil {
+	if err := r.reconcileTCPProxy(ctx, &rp, proxyPort, frpServerName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -188,7 +188,7 @@ func (r *RegistryProxyReconciler) reconcileProxyService(ctx context.Context, rp 
 	return err
 }
 
-func (r *RegistryProxyReconciler) reconcileFrpProxy(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32, frpServerName string) error {
+func (r *RegistryProxyReconciler) reconcileTCPProxy(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32, frpServerName string) error {
 	localIP := fmt.Sprintf("%s-proxy-svc.%s.svc.cluster.local", rp.Name, rp.Namespace)
 	extraConfig := fmt.Sprintf(
 		"metadatas.svcName = %q\nmetadatas.namespace = %q\nmetadatas.remotePort = %q\nmetadatas.frpServerName = %q",
@@ -198,7 +198,7 @@ func (r *RegistryProxyReconciler) reconcileFrpProxy(ctx context.Context, rp *tun
 		frpServerName,
 	)
 
-	fp := &tunnelv1alpha1.FrpProxy{
+	fp := &tunnelv1alpha1.TCPProxy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rp.Name + "-registry-proxy",
 			Namespace: rp.Namespace,
@@ -213,7 +213,6 @@ func (r *RegistryProxyReconciler) reconcileFrpProxy(ctx context.Context, rp *tun
 		}
 		fp.Labels["registryproxy"] = rp.Name
 		fp.Spec.ClientRef = tunnelv1alpha1.LocalObjectRef{Name: rp.Spec.ClientRef.Name}
-		fp.Spec.Type = "tcp"
 		fp.Spec.LocalIP = localIP
 		fp.Spec.LocalPort = proxyPort
 		fp.Spec.RemotePort = rp.Spec.RemotePort
@@ -224,11 +223,11 @@ func (r *RegistryProxyReconciler) reconcileFrpProxy(ctx context.Context, rp *tun
 }
 
 func (r *RegistryProxyReconciler) deleteOwnedResources(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy) error {
-	// Delete FrpProxy first so frpc hot-reloads before we remove the proxy pod.
-	fp := &tunnelv1alpha1.FrpProxy{}
+	// Delete TCPProxy first so frpc hot-reloads before we remove the proxy pod.
+	fp := &tunnelv1alpha1.TCPProxy{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, fp); err == nil {
 		if err := r.Delete(ctx, fp); err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("delete FrpProxy: %w", err)
+			return fmt.Errorf("delete TCPProxy: %w", err)
 		}
 	}
 	// Owned Deployment and Service are garbage-collected via ownerReferences.
@@ -243,8 +242,8 @@ func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1al
 		proxyReady = dep.Status.ReadyReplicas > 0
 	}
 
-	// Check tunnel connectivity via FrpProxy phase.
-	var fp tunnelv1alpha1.FrpProxy
+	// Check tunnel connectivity via TCPProxy phase.
+	var fp tunnelv1alpha1.TCPProxy
 	tunnelConnected := false
 	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, &fp); err == nil {
 		tunnelConnected = fp.Status.Phase == "Running"
@@ -301,9 +300,9 @@ func (r *RegistryProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&tunnelv1alpha1.RegistryProxy{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// React to FrpProxy status changes via label-based filtering.
+		// React to TCPProxy status changes via label-based filtering.
 		Watches(
-			&tunnelv1alpha1.FrpProxy{},
+			&tunnelv1alpha1.TCPProxy{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
 				rpName, ok := obj.GetLabels()["registryproxy"]
 				if !ok || rpName == "" {
