@@ -2,5 +2,13 @@
 resources:
 - tunnel_v1alpha1_nexusserver.yaml
 - tunnel_v1alpha1_nexusclient.yaml
-- tunnel_v1alpha1_frpproxy.yaml
+- tunnel_v1alpha1_tcpproxy.yaml
+- tunnel_v1alpha1_udpproxy.yaml
+- tunnel_v1alpha1_httpproxy.yaml
+- tunnel_v1alpha1_httpsproxy.yaml
+- tunnel_v1alpha1_tcpmuxproxy.yaml
+- tunnel_v1alpha1_stcpproxy.yaml
+- tunnel_v1alpha1_xtcpproxy.yaml
+- tunnel_v1alpha1_sudpproxy.yaml
+- tunnel_v1alpha1_registryproxy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
