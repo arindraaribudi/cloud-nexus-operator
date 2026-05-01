@@ -21,8 +21,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -67,12 +67,13 @@ var _ = Describe("TCPProxy Controller", func() {
 					Scheme: k8sClient.Scheme(),
 				},
 			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			// NexusClient "test-client" does not exist, so reconcile returns an error.
-			// This is expected behavior — it proves the controller wiring is correct.
-			Expect(err).To(HaveOccurred())
+			// NexusClient "test-client" does not exist. The BaseProxyReconciler handles
+			// failures by returning nil error with RequeueAfter (not propagating the error).
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(requeueDelay))
 		})
 	})
 })

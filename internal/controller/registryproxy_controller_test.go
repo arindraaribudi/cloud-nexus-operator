@@ -135,7 +135,7 @@ var _ = Describe("RegistryProxy Controller", func() {
 		Expect(k8sClient.Get(ctx, nsName(rpName+"-proxy-svc"), &svc)).To(Succeed())
 	})
 
-	It("removes owned FrpProxy on deletion", func() {
+	It("removes owned TCPProxy on deletion", func() {
 		reconcile_() // create resources
 
 		// Add finalizer so delete works
@@ -147,8 +147,8 @@ var _ = Describe("RegistryProxy Controller", func() {
 		_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
 		Expect(err).NotTo(HaveOccurred())
 
-		// FrpProxy should be gone.
-		var fp tunnelv1alpha1.FrpProxy
+		// TCPProxy should be gone.
+		var fp tunnelv1alpha1.TCPProxy
 		Expect(k8sClient.Get(ctx, nsName(rpName+"-registry-proxy"), &fp)).To(
 			Satisfy(errors.IsNotFound))
 	})
