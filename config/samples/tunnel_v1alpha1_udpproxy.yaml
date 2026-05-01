@@ -1,0 +1,25 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: UDPProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: udpproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient in this namespace
+
+  # --- Local service (required) ---
+  localPort: 53                  # port of the local UDP service on the spoke side
+
+  # --- Local IP (optional) ---
+  # localIP: 127.0.0.1           # default; IP of the local service
+
+  # --- Remote port on frps (optional; frps assigns randomly if omitted) ---
+  # remotePort: 6053             # UDP port frps exposes on the hub side
+
+  # --- Raw TOML appended verbatim to this proxy block (optional) ---
+  # extraConfig: |
+  #   bandwidthLimit = "1MB"
+  #   bandwidthLimitMode = "client"
