@@ -6,11 +6,50 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: nexusserver-sample
 spec:
-  replicas: 1
+  # --- Image ---
+  # image:
+  #   repository: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel  # default
+  #   tag: "1.0.0"                                                                       # default
+
+  # --- Replicas ---
+  # replicas: 1              # default
+
+  # --- Bind port (frpc clients connect here) ---
   bindPort: 7000
+
+  # --- Virtual host ports (required for HTTPProxy / HTTPSProxy types) ---
+  # vhostHTTPPort: 8080      # port frps listens on for HTTP virtual host traffic
+  # vhostHTTPSPort: 8443     # port frps listens on for HTTPS virtual host traffic
+
+  # --- Dashboard (optional web UI) ---
+  # dashboardPort: 7500
+  # dashboardUser: admin
+  # dashboardPasswordSecret:
+  #   name: nexusserver-dashboard-secret
+  #   key: password
+
+  # --- Auth token (nil = operator auto-generates a random token secret) ---
+  # authTokenSecret:
+  #   name: nexusserver-auth-secret
+  #   key: token
+
+  # --- Raw TOML appended verbatim to frps.toml ---
+  # extraConfig: |
+  #   [log]
+  #   to = "console"
+  #   level = "info"
+
+  # --- Kubernetes Service exposing frps ---
   service:
-    type: LoadBalancer
+    type: LoadBalancer           # use NodePort for bare-metal clusters
     ports:
       - name: frp
         port: 7000
         protocol: TCP
+    # annotations:               # cloud-provider Service annotations
+    #   service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+
+  # --- RegistryProxy operator plugin ---
+  # enableOperatorPlugin: false  # default; set true when using RegistryProxy CRDs
+  # operatorWebhookAddr: ""      # default: auto-derived from namespace
+  #   # e.g. cloud-nexus-operator-controller-manager-frps-plugin.<namespace>.svc.cluster.local:9090
