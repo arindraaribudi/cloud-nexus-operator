@@ -45,3 +45,15 @@ type ServiceSpec struct {
 	// +optional
 	Ports []corev1.ServicePort `json:"ports,omitempty"`
 }
+
+// LocalObjectRef is a reference to an object in the same namespace.
+type LocalObjectRef struct {
+	// Name is the name of the referenced object.
+	Name string `json:"name"`
+}
+
+const (
+	// ProxyCleanupFinalizer is added to all typed proxy resources.
+	// Deletion triggers a config reload before the resource is removed.
+	ProxyCleanupFinalizer = "tunnel.io/proxy-cleanup"
+)

@@ -20,12 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const (
-	// ProxyCleanupFinalizer is the finalizer added to FrpProxy resources.
-	// Deletion triggers a config reload before the resource is removed.
-	ProxyCleanupFinalizer = "tunnel.io/proxy-cleanup"
-)
-
 // FrpProxySpec defines the desired state of FrpProxy.
 type FrpProxySpec struct {
 	// ClientRef references the parent NexusClient.
@@ -60,12 +54,6 @@ type FrpProxySpec struct {
 	// ExtraConfig is raw TOML appended verbatim to this proxy block.
 	// +optional
 	ExtraConfig string `json:"extraConfig,omitempty"`
-}
-
-// LocalObjectRef is a reference to an object in the same namespace.
-type LocalObjectRef struct {
-	// Name is the name of the referenced object.
-	Name string `json:"name"`
 }
 
 // FrpProxyStatus defines the observed state of FrpProxy.
