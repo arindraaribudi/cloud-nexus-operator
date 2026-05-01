@@ -1,0 +1,29 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: STCPProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: stcpproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient (server side) in this namespace
+
+  # --- Local service (required) ---
+  localPort: 22                  # port of the local service on the spoke side
+
+  # --- Local IP (optional) ---
+  # localIP: 127.0.0.1           # default; IP of the local service
+
+  # --- Secret key (optional; visitors must present this to connect) ---
+  secretKey: my-shared-secret    # shared secret between this proxy and its visitors
+
+  # --- Allowed visitor names (optional; empty = allow all visitors with correct secretKey) ---
+  allowUsers:
+    - visitor-client             # frpc instance names allowed to connect as visitors
+
+  # --- Raw TOML appended verbatim to this proxy block (optional) ---
+  # extraConfig: |
+  #   bandwidthLimit = "1MB"
+  #   bandwidthLimitMode = "client"
