@@ -1,0 +1,19 @@
+{
+  "bootstrap-sha": "e3fd7a18eeafb5db8b9ec3feae09b48d8d8e0d4d",
+  "packages": {
+    ".": {
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false,
+      "prerelease-type": "beta",
+      "release-type": "go"
+    }
+  },
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "workspaces": [
+        "."
+      ]
+    }
+  ]
+}

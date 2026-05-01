@@ -42,9 +42,16 @@ rules:
   - tunnel.tunnel.io
   resources:
   - frpclients
-  - frpproxies
   - frpservers
+  - httpproxies
+  - httpsproxies
   - registryproxies
+  - stcpproxies
+  - sudpproxies
+  - tcpmuxproxies
+  - tcpproxies
+  - udpproxies
+  - xtcpproxies
   verbs:
   - create
   - delete
@@ -57,18 +64,32 @@ rules:
   - tunnel.tunnel.io
   resources:
   - frpclients/finalizers
-  - frpproxies/finalizers
   - frpservers/finalizers
+  - httpproxies/finalizers
+  - httpsproxies/finalizers
   - registryproxies/finalizers
+  - stcpproxies/finalizers
+  - sudpproxies/finalizers
+  - tcpmuxproxies/finalizers
+  - tcpproxies/finalizers
+  - udpproxies/finalizers
+  - xtcpproxies/finalizers
   verbs:
   - update
 - apiGroups:
   - tunnel.tunnel.io
   resources:
   - frpclients/status
-  - frpproxies/status
   - frpservers/status
+  - httpproxies/status
+  - httpsproxies/status
   - registryproxies/status
+  - stcpproxies/status
+  - sudpproxies/status
+  - tcpmuxproxies/status
+  - tcpproxies/status
+  - udpproxies/status
+  - xtcpproxies/status
   verbs:
   - get
   - patch

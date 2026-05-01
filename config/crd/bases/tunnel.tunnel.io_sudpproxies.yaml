@@ -4,22 +4,19 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: frpproxies.tunnel.tunnel.io
+  name: sudpproxies.tunnel.tunnel.io
 spec:
   group: tunnel.tunnel.io
   names:
-    kind: FrpProxy
-    listKind: FrpProxyList
-    plural: frpproxies
-    singular: frpproxy
+    kind: SUDPProxy
+    listKind: SUDPProxyList
+    plural: sudpproxies
+    singular: sudpproxy
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.phase
       name: Phase
-      type: string
-    - jsonPath: .spec.type
-      name: Type
       type: string
     - jsonPath: .spec.clientRef.name
       name: Client
@@ -30,7 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: FrpProxy is the Schema for the frpproxies API.
+        description: SUDPProxy is the Schema for the sudpproxies API.
         properties:
           apiVersion:
             description: |-
@@ -50,8 +47,13 @@ spec:
           metadata:
             type: object
           spec:
-            description: FrpProxySpec defines the desired state of FrpProxy.
+            description: SUDPProxySpec defines the desired state of SUDPProxy.
             properties:
+              allowUsers:
+                description: AllowUsers lists the visitor names allowed to connect.
+                items:
+                  type: string
+                type: array
               clientRef:
                 description: ClientRef references the parent NexusClient.
                 properties:
@@ -61,11 +63,6 @@ spec:
                 required:
                 - name
                 type: object
-              customDomains:
-                description: CustomDomains lists the virtual host domains (http/https).
-                items:
-                  type: string
-                type: array
               extraConfig:
                 description: ExtraConfig is raw TOML appended verbatim to this proxy
                   block.
@@ -77,32 +74,16 @@ spec:
                 description: LocalPort is the local service port.
                 format: int32
                 type: integer
-              remotePort:
-                description: RemotePort is the port exposed on the frps side (tcp/udp).
-                format: int32
-                type: integer
               secretKey:
-                description: SecretKey is the shared secret for stcp/xtcp.
-                type: string
-              type:
-                description: Type is the tunnel type (tcp, udp, http, https, stcp,
-                  xtcp, tcpmux).
-                enum:
-                - tcp
-                - udp
-                - http
-                - https
-                - stcp
-                - xtcp
-                - tcpmux
+                description: SecretKey is the shared secret that visitors must present.
                 type: string
             required:
             - clientRef
             - localPort
-            - type
             type: object
           status:
-            description: FrpProxyStatus defines the observed state of FrpProxy.
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
             properties:
               conditions:
                 items:
@@ -169,11 +150,9 @@ spec:
                 format: date-time
                 type: string
               phase:
-                description: Phase is the current lifecycle phase.
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
                 type: string
             type: object
-        required:
-        - spec
         type: object
     served: true
     storage: true
