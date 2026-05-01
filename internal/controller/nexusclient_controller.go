@@ -53,7 +53,6 @@ type NexusClientReconciler struct {
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients/finalizers,verbs=update
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpproxies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -92,32 +91,22 @@ func (r *NexusClientReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Include current proxies so the ConfigMap is always complete.
-	activeProxiesOld, err := r.listActiveProxies(ctx, &spoke)
+	proxyParams, err := listAllActiveProxyParams(ctx, r.Client, spoke.Namespace, spoke.Name)
 	if err != nil {
 		log.Error(err, "failed to list proxies")
 		return ctrl.Result{}, err
-	}
-	proxyParams := make([]config.ProxyParams, 0, len(activeProxiesOld))
-	for _, p := range activeProxiesOld {
-		localIP := p.Spec.LocalIP
-		if localIP == "" {
-			localIP = "127.0.0.1"
-		}
-		proxyParams = append(proxyParams, config.ProxyParams{
-			Name: p.Name, Type: p.Spec.Type, LocalIP: localIP,
-			LocalPort: p.Spec.LocalPort, RemotePort: p.Spec.RemotePort,
-			CustomDomains: p.Spec.CustomDomains, SecretKey: p.Spec.SecretKey,
-			ExtraConfig: p.Spec.ExtraConfig,
-		})
 	}
 	adminPort := spoke.Spec.Admin.Port
 	if adminPort == 0 {
 		adminPort = 7400
 	}
 	base := config.BaseParams{
-		ServerAddr: serverAddr, ServerPort: serverPort,
-		AuthToken: authToken, AdminPort: adminPort,
-		AdminToken: adminToken, ExtraConfig: spoke.Spec.ExtraConfig,
+		ServerAddr:  serverAddr,
+		ServerPort:  serverPort,
+		AuthToken:   authToken,
+		AdminPort:   adminPort,
+		AdminToken:  adminToken,
+		ExtraConfig: spoke.Spec.ExtraConfig,
 	}
 	toml, err := config.RenderFrpcToml(base, proxyParams)
 	if err != nil {
@@ -281,23 +270,6 @@ func (r *NexusClientReconciler) reconcileClientDeployment(ctx context.Context, s
 	return err
 }
 
-func (r *NexusClientReconciler) listActiveProxies(ctx context.Context, spoke *tunnelv1alpha1.NexusClient) ([]tunnelv1alpha1.FrpProxy, error) {
-	var list tunnelv1alpha1.FrpProxyList
-	if err := r.List(ctx, &list,
-		client.InNamespace(spoke.Namespace),
-		client.MatchingFields{"spec.clientRef.name": spoke.Name},
-	); err != nil {
-		return nil, err
-	}
-	var proxies []tunnelv1alpha1.FrpProxy
-	for _, p := range list.Items {
-		if p.DeletionTimestamp.IsZero() {
-			proxies = append(proxies, p)
-		}
-	}
-	return proxies, nil
-}
-
 func (r *NexusClientReconciler) reconcileAdminService(ctx context.Context, spoke *tunnelv1alpha1.NexusClient) error {
 	adminPort := spoke.Spec.Admin.Port
 	if adminPort == 0 {
@@ -331,37 +303,36 @@ func (r *NexusClientReconciler) reconcileAdminService(ctx context.Context, spoke
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NexusClientReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Index FrpProxy by spec.clientRef.name for efficient listing.
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(),
-		&tunnelv1alpha1.FrpProxy{},
-		"spec.clientRef.name",
-		func(rawObj client.Object) []string {
-			proxy := rawObj.(*tunnelv1alpha1.FrpProxy)
-			return []string{proxy.Spec.ClientRef.Name}
+	// enqueueFromProxy maps any typed proxy change to the owning NexusClient reconcile request.
+	enqueueFromProxy := handler.EnqueueRequestsFromMapFunc(
+		func(_ context.Context, obj client.Object) []reconcile.Request {
+			p, ok := obj.(tunnelv1alpha1.ProxyObject)
+			if !ok {
+				return nil
+			}
+			return []reconcile.Request{{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      p.GetClientRef().Name,
+				},
+			}}
 		},
-	); err != nil {
-		return err
-	}
+	)
 
-	// Watches FrpProxy changes so the ConfigMap stays in sync when proxies are added/removed.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tunnelv1alpha1.NexusClient{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.Secret{}).
-		Watches(
-			&tunnelv1alpha1.FrpProxy{},
-			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
-				p := obj.(*tunnelv1alpha1.FrpProxy)
-				return []reconcile.Request{{
-					NamespacedName: types.NamespacedName{
-						Namespace: p.Namespace,
-						Name:      p.Spec.ClientRef.Name,
-					},
-				}}
-			}),
-		).
+		Watches(&tunnelv1alpha1.TCPProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.UDPProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.HTTPProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.HTTPSProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.TCPMuxProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.STCPProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.XTCPProxy{}, enqueueFromProxy).
+		Watches(&tunnelv1alpha1.SUDPProxy{}, enqueueFromProxy).
 		Named("frpclient").
 		Complete(r)
 }
