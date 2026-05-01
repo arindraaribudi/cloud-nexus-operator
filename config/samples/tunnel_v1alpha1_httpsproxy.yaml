@@ -1,0 +1,29 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: HTTPSProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: httpsproxy-sample
+spec:
+  # --- Client reference (required) ---
+  clientRef:
+    name: nexusclient-sample     # name of the NexusClient in this namespace
+
+  # --- Local service (required) ---
+  localPort: 8443                # port of the local HTTPS service on the spoke side
+
+  # --- Local IP (optional) ---
+  # localIP: 127.0.0.1           # default; IP of the local service
+
+  # --- Remote port (optional; frps routes by virtual host via vhostHTTPSPort) ---
+  # remotePort: 0                # rarely needed for HTTPS virtual host routing
+
+  # --- Virtual host routing (use customDomains OR subdomain, not both) ---
+  customDomains:
+    - secure.example.com         # fully-qualified domain routed to this proxy
+  # subdomain: secure-app        # alternative: subdomain prefix
+
+  # --- Raw TOML appended verbatim to this proxy block (optional) ---
+  # extraConfig: |
+  #   hostHeaderRewrite = "secure.internal.example.com"
