@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,37 @@ func TestAuthScheme(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("host=%q: got %q, want %q", tc.host, got, tc.want)
 		}
+	}
+}
+
+func TestStripPrefix_Applied(t *testing.T) {
+	// With STRIP_PREFIX=/spoke1/registry, path /spoke1/registry/v2/host.io/img/manifests/tag
+	// should be routed as if path was /v2/host.io/img/manifests/tag.
+	// We test parseUpstream on the stripped path.
+	raw := "/spoke1/registry/v2/asia-southeast3-docker.pkg.dev/proj/img/manifests/latest"
+	prefix := "/spoke1/registry"
+	stripped := strings.TrimPrefix(raw, prefix)
+	// stripped = /v2/asia-southeast3-docker.pkg.dev/proj/img/manifests/latest
+	host, rest, ok := parseUpstream(stripped)
+	if !ok {
+		t.Fatal("expected ok=true after stripping prefix")
+	}
+	if host != "asia-southeast3-docker.pkg.dev" {
+		t.Errorf("host: got %q, want %q", host, "asia-southeast3-docker.pkg.dev")
+	}
+	if rest != "proj/img/manifests/latest" {
+		t.Errorf("rest: got %q, want %q", rest, "proj/img/manifests/latest")
+	}
+}
+
+func TestStripPrefix_EmptyPrefix(t *testing.T) {
+	// When STRIP_PREFIX is empty, /v2/host.io/img/... works unchanged.
+	raw := "/v2/asia-southeast3-docker.pkg.dev/proj/img/manifests/latest"
+	host, _, ok := parseUpstream(raw)
+	if !ok {
+		t.Fatal("expected ok=true with no prefix")
+	}
+	if host != "asia-southeast3-docker.pkg.dev" {
+		t.Errorf("host: got %q", host)
 	}
 }

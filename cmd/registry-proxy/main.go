@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -50,11 +51,19 @@ func main() {
 	port := flag.Int("port", 5000, "port the registry proxy listens on")
 	flag.Parse()
 
+	stripPrefix := os.Getenv("STRIP_PREFIX")
+
 	h := &handler{}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v2/", h.handleRequest)
+
+	pattern := "/v2/"
+	if stripPrefix != "" {
+		pattern = stripPrefix + "/v2/"
+	}
+	mux.Handle(pattern, http.StripPrefix(stripPrefix, http.HandlerFunc(h.handleRequest)))
+
 	addr := fmt.Sprintf(":%d", *port)
-	slog.Info("registry-proxy starting", "addr", addr)
+	slog.Info("registry-proxy starting", "addr", addr, "stripPrefix", stripPrefix)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("registry-proxy exited", "error", err)
 	}
