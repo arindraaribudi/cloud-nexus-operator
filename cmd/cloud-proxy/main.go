@@ -20,6 +20,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,10 +34,10 @@ import (
 	"sync"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -141,6 +142,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadGateway, "Azure auth error: "+err.Error())
 			return
 		}
+	case "tencent":
+		if err := h.signTencent(outReq, bodyBytes); err != nil {
+			writeJSONError(w, http.StatusBadGateway, "Tencent auth error: "+err.Error())
+			return
+		}
 	}
 
 	client := &http.Client{
@@ -219,6 +225,45 @@ func signAzure(ctx context.Context, req *http.Request, cloudFQDN string) error {
 	return nil
 }
 
+func (h *handler) signTencent(req *http.Request, body []byte) error {
+	service, err := parseTencentService(req.Host)
+	if err != nil {
+		return err
+	}
+	return h.signTencentAt(req, body, service, time.Now().UTC())
+}
+
+func (h *handler) signTencentAt(req *http.Request, body []byte, service string, now time.Time) error {
+	secretID := os.Getenv("TENCENTCLOUD_SECRET_ID")
+	secretKey := os.Getenv("TENCENTCLOUD_SECRET_KEY")
+	if secretID == "" {
+		return fmt.Errorf("TENCENTCLOUD_SECRET_ID env var is empty")
+	}
+	if secretKey == "" {
+		return fmt.Errorf("TENCENTCLOUD_SECRET_KEY env var is empty")
+	}
+
+	timestamp := fmt.Sprintf("%d", now.Unix())
+	date := now.Format("2006-01-02")
+
+	canonicalHeaders := "content-type:" + req.Header.Get("Content-Type") + "\nhost:" + req.Host + "\n"
+	signedHeaders := "content-type;host"
+	hashedPayload := hex.EncodeToString(sha256sum(body))
+	canonicalRequest := req.Method + "\n" + req.URL.Path + "\n" + req.URL.RawQuery + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + hashedPayload
+	credentialScope := date + "/" + service + "/tc3_request"
+	hashedCanonicalRequest := hex.EncodeToString(sha256sum([]byte(canonicalRequest)))
+	stringToSign := "TC3-HMAC-SHA256\n" + timestamp + "\n" + credentialScope + "\n" + hashedCanonicalRequest
+
+	secretDate := hmacSHA256([]byte("TC3"+secretKey), []byte(date))
+	secretService := hmacSHA256(secretDate, []byte(service))
+	signingKey := hmacSHA256(secretService, []byte("tc3_request"))
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	req.Header.Set("X-TC-Timestamp", timestamp)
+	req.Header.Set("Authorization", "TC3-HMAC-SHA256 Credential="+secretID+"/"+credentialScope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	return nil
+}
+
 func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -244,7 +289,7 @@ func parseCloudRequest(path, prefix string) (cloudFQDN, apiPath string, err erro
 	return rest[:slash], rest[slash:], nil
 }
 
-// cloudProvider returns "aws", "gcp", "azure", or "" for unrecognised domains.
+// cloudProvider returns "aws", "gcp", "azure", "tencent", or "" for unrecognised domains.
 func cloudProvider(fqdn string) string {
 	switch {
 	case strings.HasSuffix(fqdn, ".amazonaws.com"):
@@ -255,6 +300,9 @@ func cloudProvider(fqdn string) string {
 		strings.HasSuffix(fqdn, ".azure.com"),
 		strings.HasSuffix(fqdn, ".azconfig.io"):
 		return "azure"
+	case strings.HasSuffix(fqdn, ".tencentcloudapi.com"),
+		strings.HasSuffix(fqdn, ".myqcloud.com"):
+		return "tencent"
 	default:
 		return ""
 	}
@@ -294,4 +342,34 @@ func parseAWSService(fqdn string) (service, region string, err error) {
 		return "", "", fmt.Errorf("unexpected AWS FQDN format: %s", fqdn)
 	}
 	return parts[0], parts[1], nil
+}
+
+// parseTencentService extracts the service name from a Tencent Cloud FQDN.
+// e.g. cvm.tencentcloudapi.com → "cvm"
+// e.g. cos.myqcloud.com → "cos"
+func parseTencentService(fqdn string) (string, error) {
+	host := strings.ToLower(fqdn)
+	for _, suffix := range []string{".tencentcloudapi.com", ".myqcloud.com"} {
+		if strings.HasSuffix(host, suffix) {
+			svc := strings.TrimSuffix(host, suffix)
+			if svc == "" {
+				return "", fmt.Errorf("empty service in Tencent FQDN: %s", fqdn)
+			}
+			return svc, nil
+		}
+	}
+	return "", fmt.Errorf("not a Tencent Cloud FQDN: %s", fqdn)
+}
+
+// hmacSHA256 computes HMAC-SHA256 of data using key.
+func hmacSHA256(key, data []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
+
+// sha256sum computes SHA256 hash of data.
+func sha256sum(data []byte) []byte {
+	h := sha256.Sum256(data)
+	return h[:]
 }
