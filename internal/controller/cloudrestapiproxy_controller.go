@@ -162,8 +162,8 @@ func (r *CloudRestApiProxyReconciler) reconcileDeployment(ctx context.Context, c
 				ServiceAccountName: cr.Spec.ServiceAccountName,
 				Containers: []corev1.Container{
 					{
-						Name:  "cloud-proxy",
-						Image: image,
+						Name:    "cloud-proxy",
+						Image:   image,
 						Command: []string{"/cloud-proxy"},
 						Ports: []corev1.ContainerPort{
 							{Name: "proxy", ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
