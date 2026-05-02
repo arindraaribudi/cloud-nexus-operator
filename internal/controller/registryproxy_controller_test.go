@@ -135,21 +135,18 @@ var _ = Describe("RegistryProxy Controller", func() {
 		Expect(k8sClient.Get(ctx, nsName(rpName+"-proxy-svc"), &svc)).To(Succeed())
 	})
 
-	It("removes owned TCPProxy on deletion", func() {
+	It("removes owned HTTPProxy on deletion", func() {
 		reconcile_() // create resources
 
-		// Add finalizer so delete works
 		var rp tunnelv1alpha1.RegistryProxy
 		Expect(k8sClient.Get(ctx, nsName(rpName), &rp)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, &rp)).To(Succeed())
 
-		// Reconcile deletion path.
 		_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
 		Expect(err).NotTo(HaveOccurred())
 
-		// TCPProxy should be gone.
-		var fp tunnelv1alpha1.TCPProxy
-		Expect(k8sClient.Get(ctx, nsName(rpName+"-registry-proxy"), &fp)).To(
+		var hp tunnelv1alpha1.HTTPProxy
+		Expect(k8sClient.Get(ctx, nsName(rpName+"-registry-proxy"), &hp)).To(
 			Satisfy(errors.IsNotFound))
 	})
 
@@ -162,5 +159,27 @@ var _ = Describe("RegistryProxy Controller", func() {
 		result, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(15 * time.Second))
+	})
+
+	It("creates owned HTTPProxy with correct customDomains and location", func() {
+		reconcile_()
+		var hp tunnelv1alpha1.HTTPProxy
+		Expect(k8sClient.Get(ctx, nsName(rpName+"-registry-proxy"), &hp)).To(Succeed())
+		Expect(hp.Spec.ClientRef.Name).To(Equal(clientName))
+		Expect(hp.Spec.CustomDomains).To(ContainElement(
+			fmt.Sprintf("%s-gateway.%s.svc.cluster.local", serverName, ns),
+		))
+		Expect(hp.Spec.ExtraConfig).To(ContainSubstring("/" + clientName + "/registry"))
+	})
+
+	It("creates Deployment with STRIP_PREFIX env var", func() {
+		reconcile_()
+		var dep appsv1.Deployment
+		Expect(k8sClient.Get(ctx, nsName(rpName+"-proxy"), &dep)).To(Succeed())
+		envMap := map[string]string{}
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		Expect(envMap["STRIP_PREFIX"]).To(Equal("/" + clientName + "/registry"))
 	})
 })

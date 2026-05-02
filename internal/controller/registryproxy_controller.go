@@ -49,7 +49,8 @@ type RegistryProxyReconciler struct {
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/finalizers,verbs=update
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=tcpproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=httpproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=nexusservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -110,24 +111,38 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		proxyPort = *rp.Spec.ProxyPort
 	}
 
-	// Resolve frpServerName for metadata (used by hub webhook to create Service selector).
-	frpServerName := spoke.Spec.ServerRef.Name // may be "" for explicit-address mode
+	// Resolve NexusServer for gateway FQDN.
+	var server tunnelv1alpha1.NexusServer
+	if err := r.Get(ctx, types.NamespacedName{
+		Namespace: rp.Namespace,
+		Name:      spoke.Spec.ServerRef.Name,
+	}, &server); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("NexusServer not found, requeuing", "server", spoke.Spec.ServerRef.Name)
+			return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
-	if err := r.reconcileProxyDeployment(ctx, &rp, image, proxyPort); err != nil {
+	gatewayFQDN := fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, rp.Namespace)
+	spokeName := spoke.Name
+
+	if err := r.reconcileProxyDeployment(ctx, &rp, image, proxyPort, spokeName); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.reconcileProxyService(ctx, &rp, proxyPort); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcileTCPProxy(ctx, &rp, proxyPort, frpServerName); err != nil {
+	if err := r.reconcileHTTPProxy(ctx, &rp, proxyPort, spokeName, gatewayFQDN); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.syncStatus(ctx, &rp)
+	return ctrl.Result{}, r.syncStatus(ctx, &rp, server.Spec.VhostHTTPPort, spokeName, gatewayFQDN)
 }
 
-func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, image string, proxyPort int32) error {
+func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, image string, proxyPort int32, spokeName string) error {
 	replicas := int32(1)
+	stripPrefix := "/" + spokeName + "/registry"
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rp.Name + "-proxy",
@@ -152,6 +167,9 @@ func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, 
 						Command: []string{"/registry-proxy", fmt.Sprintf("--port=%d", proxyPort)},
 						Ports: []corev1.ContainerPort{
 							{Name: "proxy", ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
+						},
+						Env: []corev1.EnvVar{
+							{Name: "STRIP_PREFIX", Value: stripPrefix},
 						},
 					},
 				},
@@ -188,65 +206,55 @@ func (r *RegistryProxyReconciler) reconcileProxyService(ctx context.Context, rp 
 	return err
 }
 
-func (r *RegistryProxyReconciler) reconcileTCPProxy(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32, frpServerName string) error {
+func (r *RegistryProxyReconciler) reconcileHTTPProxy(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32, spokeName, gatewayFQDN string) error {
 	localIP := fmt.Sprintf("%s-proxy-svc.%s.svc.cluster.local", rp.Name, rp.Namespace)
-	extraConfig := fmt.Sprintf(
-		"metadatas.svcName = %q\nmetadatas.namespace = %q\nmetadatas.remotePort = %q\nmetadatas.frpServerName = %q",
-		rp.Name+"-docker",
-		rp.Namespace,
-		fmt.Sprintf("%d", rp.Spec.RemotePort),
-		frpServerName,
-	)
+	location := "/" + spokeName + "/registry"
 
-	fp := &tunnelv1alpha1.TCPProxy{
+	hp := &tunnelv1alpha1.HTTPProxy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rp.Name + "-registry-proxy",
 			Namespace: rp.Namespace,
 		},
 	}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, fp, func() error {
-		if err := controllerutil.SetControllerReference(rp, fp, r.Scheme); err != nil {
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, hp, func() error {
+		if err := controllerutil.SetControllerReference(rp, hp, r.Scheme); err != nil {
 			return err
 		}
-		if fp.Labels == nil {
-			fp.Labels = make(map[string]string)
+		if hp.Labels == nil {
+			hp.Labels = make(map[string]string)
 		}
-		fp.Labels["registryproxy"] = rp.Name
-		fp.Spec.ClientRef = tunnelv1alpha1.LocalObjectRef{Name: rp.Spec.ClientRef.Name}
-		fp.Spec.LocalIP = localIP
-		fp.Spec.LocalPort = proxyPort
-		fp.Spec.RemotePort = rp.Spec.RemotePort
-		fp.Spec.ExtraConfig = extraConfig
+		hp.Labels["registryproxy"] = rp.Name
+		hp.Spec.ClientRef = tunnelv1alpha1.LocalObjectRef{Name: rp.Spec.ClientRef.Name}
+		hp.Spec.LocalIP = localIP
+		hp.Spec.LocalPort = proxyPort
+		hp.Spec.CustomDomains = []string{gatewayFQDN}
+		hp.Spec.ExtraConfig = fmt.Sprintf("locations = [%q]", location)
 		return nil
 	})
 	return err
 }
 
 func (r *RegistryProxyReconciler) deleteOwnedResources(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy) error {
-	// Delete TCPProxy first so frpc hot-reloads before we remove the proxy pod.
-	fp := &tunnelv1alpha1.TCPProxy{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, fp); err == nil {
-		if err := r.Delete(ctx, fp); err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("delete TCPProxy: %w", err)
+	hp := &tunnelv1alpha1.HTTPProxy{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, hp); err == nil {
+		if err := r.Delete(ctx, hp); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("delete HTTPProxy: %w", err)
 		}
 	}
-	// Owned Deployment and Service are garbage-collected via ownerReferences.
 	return nil
 }
 
-func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy) error {
-	// Check proxy Deployment readiness.
+func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, vhostPort int32, spokeName, gatewayFQDN string) error {
 	var dep appsv1.Deployment
 	proxyReady := false
 	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-proxy"}, &dep); err == nil {
 		proxyReady = dep.Status.ReadyReplicas > 0
 	}
 
-	// Check tunnel connectivity via TCPProxy phase.
-	var fp tunnelv1alpha1.TCPProxy
+	var hp tunnelv1alpha1.HTTPProxy
 	tunnelConnected := false
-	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, &fp); err == nil {
-		tunnelConnected = fp.Status.Phase == "Running"
+	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, &hp); err == nil {
+		tunnelConnected = hp.Status.Phase == "Running"
 	}
 
 	updated := rp.DeepCopy()
@@ -263,7 +271,7 @@ func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1al
 		for i, c := range updated.Status.Conditions {
 			if c.Type == condType {
 				if c.Status == status {
-					return // no change
+					return
 				}
 				updated.Status.Conditions[i] = cond
 				return
@@ -278,10 +286,10 @@ func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1al
 		setCondition("ProxyReady", metav1.ConditionFalse, "DeploymentNotReady", "waiting for registry-proxy pod")
 	}
 	if tunnelConnected {
-		setCondition("TunnelConnected", metav1.ConditionTrue, "FrpProxyRunning", "")
-		updated.Status.HubService = fmt.Sprintf("%s-docker.%s.svc.cluster.local", rp.Name, rp.Namespace)
+		setCondition("TunnelConnected", metav1.ConditionTrue, "HTTPProxyRunning", "")
+		updated.Status.HubService = fmt.Sprintf("http://%s:%d/%s/registry", gatewayFQDN, vhostPort, spokeName)
 	} else {
-		setCondition("TunnelConnected", metav1.ConditionFalse, "FrpProxyNotRunning", "waiting for FRP tunnel")
+		setCondition("TunnelConnected", metav1.ConditionFalse, "HTTPProxyNotRunning", "waiting for FRP tunnel")
 		updated.Status.HubService = ""
 	}
 
@@ -300,9 +308,9 @@ func (r *RegistryProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&tunnelv1alpha1.RegistryProxy{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// React to TCPProxy status changes via label-based filtering.
+		// React to HTTPProxy status changes via label-based filtering.
 		Watches(
-			&tunnelv1alpha1.TCPProxy{},
+			&tunnelv1alpha1.HTTPProxy{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
 				rpName, ok := obj.GetLabels()["registryproxy"]
 				if !ok || rpName == "" {
