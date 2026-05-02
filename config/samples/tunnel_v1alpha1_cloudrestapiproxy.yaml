@@ -16,6 +16,8 @@ spec:
     - "*.googleapis.com"
     - "*.azure.net"
     - "*.azconfig.io"
+    - "*.tencentcloudapi.com"
+    - "*.myqcloud.com"
   # image:
   #   repository: your-registry/cloud-proxy
   #   tag: "1.0.0"
