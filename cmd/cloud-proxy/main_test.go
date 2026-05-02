@@ -159,7 +159,7 @@ func TestParseTencentService(t *testing.T) {
 		wantErr bool
 	}{
 		{"cvm.tencentcloudapi.com", "cvm", false},
-		{"cos.ap-beijing.myqcloud.com", "cos.ap-beijing", false},
+		{"cos.ap-beijing.myqcloud.com", "cos", false},
 		{"example.com", "", true},
 		{".tencentcloudapi.com", "", true},
 	}

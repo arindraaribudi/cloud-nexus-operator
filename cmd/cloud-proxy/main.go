@@ -355,6 +355,11 @@ func parseTencentService(fqdn string) (string, error) {
 			if svc == "" {
 				return "", fmt.Errorf("empty service in Tencent FQDN: %s", fqdn)
 			}
+			// Take only the first label (e.g. "cos.ap-beijing" -> "cos")
+			svc = strings.SplitN(svc, ".", 2)[0]
+			if svc == "" {
+				return "", fmt.Errorf("empty service in Tencent FQDN: %s", fqdn)
+			}
 			return svc, nil
 		}
 	}
