@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseCloudRequest(t *testing.T) {
@@ -81,6 +85,9 @@ func TestCloudProvider(t *testing.T) {
 		{"myvault.vault.azure.net", "azure"},
 		{"mystore.azconfig.io", "azure"},
 		{"management.azure.com", "azure"},
+		{"cvm.tencentcloudapi.com", "tencent"},
+		{"cbs.tencentcloudapi.com", "tencent"},
+		{"cos.ap-beijing.myqcloud.com", "tencent"},
 		{"example.com", ""},
 		{"github.com", ""},
 	}
@@ -142,5 +149,75 @@ func TestParseAWSService(t *testing.T) {
 		if region != tc.wantRegion {
 			t.Errorf("region: got %q, want %q", region, tc.wantRegion)
 		}
+	}
+}
+
+func TestParseTencentService(t *testing.T) {
+	tests := []struct {
+		fqdn    string
+		wantSvc string
+		wantErr bool
+	}{
+		{"cvm.tencentcloudapi.com", "cvm", false},
+		{"cos.ap-beijing.myqcloud.com", "cos.ap-beijing", false},
+		{"example.com", "", true},
+		{".tencentcloudapi.com", "", true},
+	}
+	for _, tc := range tests {
+		svc, err := parseTencentService(tc.fqdn)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseTencentService(%q): expected error, got nil", tc.fqdn)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("parseTencentService(%q): unexpected error: %v", tc.fqdn, err)
+		}
+		if svc != tc.wantSvc {
+			t.Errorf("parseTencentService(%q): got %q, want %q", tc.fqdn, svc, tc.wantSvc)
+		}
+	}
+}
+
+func TestSignTencentAt(t *testing.T) {
+	t.Setenv("TENCENTCLOUD_SECRET_ID", "test-secret-id")
+	t.Setenv("TENCENTCLOUD_SECRET_KEY", "test-secret-key")
+
+	req, err := http.NewRequest("POST", "https://cvm.tencentcloudapi.com/", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "cvm.tencentcloudapi.com"
+	req.Header.Set("Content-Type", "application/json")
+
+	h := &handler{}
+	now := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	if err := h.signTencentAt(req, []byte(`{}`), "cvm", now); err != nil {
+		t.Fatalf("signTencentAt error: %v", err)
+	}
+
+	// Verify X-TC-Timestamp
+	wantTS := "1705276800"
+	if got := req.Header.Get("X-TC-Timestamp"); got != wantTS {
+		t.Errorf("X-TC-Timestamp: got %q, want %q", got, wantTS)
+	}
+
+	// Verify Authorization header format
+	auth := req.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "TC3-HMAC-SHA256 Credential=test-secret-id/") {
+		t.Errorf("Authorization prefix wrong: %q", auth)
+	}
+	if !strings.Contains(auth, "SignedHeaders=content-type;host") {
+		t.Errorf("Authorization missing SignedHeaders: %q", auth)
+	}
+	if !strings.Contains(auth, "Signature=") {
+		t.Errorf("Authorization missing Signature: %q", auth)
+	}
+
+	// Verify exact signature golden value
+	wantAuth := "TC3-HMAC-SHA256 Credential=test-secret-id/2024-01-15/cvm/tc3_request, SignedHeaders=content-type;host, Signature=50d89240848344230e0049154b87cb574af5477b758cfe6ab2e45beb16caca85"
+	if auth != wantAuth {
+		t.Errorf("Authorization: got %q, want %q", auth, wantAuth)
 	}
 }
