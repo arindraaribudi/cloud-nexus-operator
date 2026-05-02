@@ -2,7 +2,7 @@
 
 ## Purpose
 
-CloudRestApiProxy lets hub workloads call AWS, GCP, and Azure REST APIs through an FRP tunnel without embedding cloud credentials in the hub cluster. It deploys a `cloud-proxy` sidecar on the spoke side that intercepts outbound cloud API calls, signs them with the spoke's cloud identity (AWS SigV4 via IRSA, GCP Bearer via Workload Identity, Azure Bearer via Workload Identity), and forwards the signed request to the real cloud endpoint. Hub workloads reach cloud APIs through the shared hub gateway Service created by the NexusServer.
+CloudRestApiProxy lets hub workloads call AWS, GCP, Azure, and Tencent Cloud REST APIs through an FRP tunnel without embedding cloud credentials in the hub cluster. It deploys a `cloud-proxy` sidecar on the spoke side that intercepts outbound cloud API calls, signs them with the spoke's cloud identity (AWS SigV4 via IRSA, GCP Bearer via Workload Identity, Azure Bearer via Workload Identity, Tencent Cloud TC3-HMAC-SHA256 via env vars), and forwards the signed request to the real cloud endpoint. Hub workloads reach cloud APIs through the shared hub gateway Service created by the NexusServer.
 
 ## Prerequisites
 
@@ -103,7 +103,7 @@ metadata:
 spec:
   clientRef:
     name: prod-spoke-client
-  serviceAccountName: cloud-proxy-sa   # annotated: eks.amazonaws.com/role-arn=arn:aws:iam::...
+  serviceAccountName: cloud-proxy-sa   # For AWS/GCP/Azure: annotate SA with cloud identity. For Tencent Cloud: set TENCENTCLOUD_SECRET_ID/KEY env vars on cloud-proxy Deployment
   proxyPort: 8080
   allowedDomains:
     - "*.amazonaws.com"
