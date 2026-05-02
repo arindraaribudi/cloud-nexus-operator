@@ -21,11 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	tunnelv1alpha1 "tunnel.io/cloud-nexus-operator/api/v1alpha1"
 )
@@ -79,6 +79,75 @@ var _ = Describe("NexusServer Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+	})
+})
+
+var _ = Describe("NexusServer gateway Service", func() {
+	const (
+		gwNs = "default"
+	)
+	ctx := context.Background()
+	nsName := func(name string) types.NamespacedName {
+		return types.NamespacedName{Namespace: gwNs, Name: name}
+	}
+
+	Context("when vhostHTTPPort is set", func() {
+		const gwServerName = "hub-with-vhost"
+
+		AfterEach(func() {
+			srv := &tunnelv1alpha1.NexusServer{}
+			if err := k8sClient.Get(ctx, nsName(gwServerName), srv); err == nil {
+				_ = k8sClient.Delete(ctx, srv)
+			}
+		})
+
+		It("creates gateway Service", func() {
+			srv := &tunnelv1alpha1.NexusServer{
+				ObjectMeta: metav1.ObjectMeta{Name: gwServerName, Namespace: gwNs},
+				Spec: tunnelv1alpha1.NexusServerSpec{
+					BindPort:           7000,
+					VhostHTTPPort:      8080,
+					GatewayServiceType: "ClusterIP",
+				},
+			}
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+
+			r := &NexusServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nsName(gwServerName)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var gw corev1.Service
+			Expect(k8sClient.Get(ctx, nsName(gwServerName+"-gateway"), &gw)).To(Succeed())
+			Expect(gw.Spec.Ports[0].Port).To(Equal(int32(8080)))
+			Expect(gw.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+		})
+	})
+
+	Context("when vhostHTTPPort is 0", func() {
+		const gwServerName = "hub-no-vhost"
+
+		AfterEach(func() {
+			srv := &tunnelv1alpha1.NexusServer{}
+			if err := k8sClient.Get(ctx, nsName(gwServerName), srv); err == nil {
+				_ = k8sClient.Delete(ctx, srv)
+			}
+		})
+
+		It("does not create gateway Service", func() {
+			srv := &tunnelv1alpha1.NexusServer{
+				ObjectMeta: metav1.ObjectMeta{Name: gwServerName, Namespace: gwNs},
+				Spec:       tunnelv1alpha1.NexusServerSpec{BindPort: 7000},
+			}
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+
+			r := &NexusServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nsName(gwServerName)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var gw corev1.Service
+			err = k8sClient.Get(ctx, nsName(gwServerName+"-gateway"), &gw)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 })

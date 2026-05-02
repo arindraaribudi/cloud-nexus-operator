@@ -102,6 +102,9 @@ func (r *NexusServerReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.reconcileService(ctx, &server); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.reconcileGatewayService(ctx, &server); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -255,6 +258,39 @@ func (r *NexusServerReconciler) reconcileService(ctx context.Context, server *tu
 		updated.Status.Port = 7000
 	}
 	return r.Status().Update(ctx, updated)
+}
+
+func (r *NexusServerReconciler) reconcileGatewayService(ctx context.Context, server *tunnelv1alpha1.NexusServer) error {
+	if server.Spec.VhostHTTPPort == 0 {
+		return nil
+	}
+	svcType := server.Spec.GatewayServiceType
+	if svcType == "" {
+		svcType = corev1.ServiceTypeClusterIP
+	}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      server.Name + "-gateway",
+			Namespace: server.Namespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		if err := controllerutil.SetControllerReference(server, svc, r.Scheme); err != nil {
+			return err
+		}
+		svc.Spec.Type = svcType
+		svc.Spec.Selector = map[string]string{"frpserver": server.Name}
+		svc.Spec.Ports = []corev1.ServicePort{
+			{
+				Name:       "vhost-http",
+				Port:       server.Spec.VhostHTTPPort,
+				Protocol:   corev1.ProtocolTCP,
+				TargetPort: intstr.FromInt32(server.Spec.VhostHTTPPort),
+			},
+		}
+		return nil
+	})
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -102,6 +102,12 @@ spec:
               extraConfig:
                 description: ExtraConfig is raw TOML appended verbatim to frps.toml.
                 type: string
+              gatewayServiceType:
+                default: ClusterIP
+                description: |-
+                  GatewayServiceType is the K8s Service type for the unified HTTP gateway.
+                  The gateway Service is only created when vhostHTTPPort is non-zero.
+                type: string
               image:
                 description: Image specifies the container image for frps.
                 properties:
