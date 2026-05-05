@@ -182,13 +182,15 @@ func main() {
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
 		WebhookServiceAddr: os.Getenv("WEBHOOK_SERVICE_ADDR"),
+		TunnelImage:        os.Getenv("TUNNEL_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NexusServer")
 		os.Exit(1)
 	}
 	if err := (&controller.NexusClientReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		TunnelImage: os.Getenv("TUNNEL_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NexusClient")
 		os.Exit(1)

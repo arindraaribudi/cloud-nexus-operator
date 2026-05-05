@@ -44,6 +44,9 @@ type NexusServerReconciler struct {
 	// default [[httpPlugins]] addr when NexusServer.spec.operatorWebhookAddr is empty.
 	// When unset, falls back to controller-manager-frps-plugin.<server-namespace>.svc.cluster.local:9090.
 	WebhookServiceAddr string
+	// TunnelImage is the default frps container image used when NexusServer.spec.image
+	// is not set. Populated from the TUNNEL_IMAGE env var on the manager Deployment.
+	TunnelImage string
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpservers,verbs=get;list;watch;create;update;patch;delete
@@ -157,7 +160,11 @@ func (r *NexusServerReconciler) reconcileDeployment(ctx context.Context, server 
 
 	image := server.Spec.Image.Repository + ":" + server.Spec.Image.Tag
 	if server.Spec.Image.Repository == "" {
-		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		if r.TunnelImage != "" {
+			image = r.TunnelImage
+		} else {
+			image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		}
 	}
 
 	dep := &appsv1.Deployment{

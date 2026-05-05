@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - bundle-install.yaml
+
+# Replace newName / newTag with your target values before deploying.
+images:
+  # Operator controller-manager
+  - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator
+    newName: <your-registry>/cloud-nexus-operator
+    newTag: "<your-tag>"
+  # Webhook server
+  - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
+    newName: <your-registry>/crd-tunnel-webhook
+    newTag: "<your-tag>"
+
+# The tunnel image (frpc / frps) is passed to the operator via the TUNNEL_IMAGE
+# env var and used as the default when NexusClient / NexusServer do not set
+# spec.image.  Override it with a strategic merge patch:
+#
+# patches:
+#   - target:
+#       kind: Deployment
+#       name: cloud-nexus-operator-controller-manager
+#     patch: |-
+#       apiVersion: apps/v1
+#       kind: Deployment
+#       metadata:
+#         name: cloud-nexus-operator-controller-manager
+#       spec:
+#         template:
+#           spec:
+#             containers:
+#             - name: manager
+#               env:
+#               - name: TUNNEL_IMAGE
+#                 value: "<your-registry>/crd-tunnel:<your-tag>"

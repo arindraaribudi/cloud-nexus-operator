@@ -4,9 +4,9 @@ IMG ?= controller:latest
 # FRP operator image settings
 REGISTRY ?= asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops
 FRP_VERSION ?= v0.68.1
-TUNNEL_VERSION ?= 1.0.4
-OPERATOR_VERSION ?= 1.0.12
-WEBHOOK_VERSION ?= 1.0.2
+TUNNEL_VERSION ?= 1.0.5
+OPERATOR_VERSION ?= 1.0.13
+WEBHOOK_VERSION ?= 1.0.3
 PLATFORMS ?= linux/amd64,linux/arm64,linux/arm/v7
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)

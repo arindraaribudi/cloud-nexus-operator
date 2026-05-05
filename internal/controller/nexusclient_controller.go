@@ -48,6 +48,9 @@ const (
 type NexusClientReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// TunnelImage is the default frpc container image used when NexusClient.spec.image
+	// is not set. Populated from the TUNNEL_IMAGE env var on the manager Deployment.
+	TunnelImage string
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch;create;update;patch;delete
@@ -223,7 +226,11 @@ func (r *NexusClientReconciler) reconcileClientConfigMap(ctx context.Context, sp
 func (r *NexusClientReconciler) reconcileClientDeployment(ctx context.Context, spoke *tunnelv1alpha1.NexusClient) error {
 	image := spoke.Spec.Image.Repository + ":" + spoke.Spec.Image.Tag
 	if spoke.Spec.Image.Repository == "" {
-		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		if r.TunnelImage != "" {
+			image = r.TunnelImage
+		} else {
+			image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		}
 	}
 
 	replicas := int32(1)
