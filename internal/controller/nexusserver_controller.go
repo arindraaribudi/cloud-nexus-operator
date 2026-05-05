@@ -180,22 +180,41 @@ func (r *NexusServerReconciler) reconcileDeployment(ctx context.Context, server 
 		labels := map[string]string{"app": "frpserver", "frpserver": server.Name}
 		dep.Spec.Replicas = &replicas
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		containers := []corev1.Container{
+			{
+				Name:    "frps",
+				Image:   image,
+				Command: []string{"/frps", "-c", "/etc/frp/frps.toml"},
+				Ports: []corev1.ContainerPort{
+					{Name: "bind", ContainerPort: server.Spec.BindPort, Protocol: corev1.ProtocolTCP},
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "config", MountPath: "/etc/frp", ReadOnly: true},
+				},
+			},
+		}
+		if server.Spec.DiscoveryPort > 0 {
+			gatewayFQDN := fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, server.Namespace)
+			containers = append(containers, corev1.Container{
+				Name:    "nexus-discovery",
+				Image:   image,
+				Command: []string{"/nexus-discovery"},
+				Ports: []corev1.ContainerPort{
+					{Name: "discovery", ContainerPort: server.Spec.DiscoveryPort, Protocol: corev1.ProtocolTCP},
+				},
+				Env: []corev1.EnvVar{
+					{Name: "DISCOVERY_PORT", Value: fmt.Sprint(server.Spec.DiscoveryPort)},
+					{Name: "GATEWAY_FQDN", Value: gatewayFQDN},
+					{Name: "GATEWAY_PORT", Value: fmt.Sprint(server.Spec.VhostHTTPPort)},
+					{Name: "SERVER_NAME", Value: server.Name},
+					{Name: "SERVER_NAMESPACE", Value: server.Namespace},
+				},
+			})
+		}
 		dep.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{
-				Containers: []corev1.Container{
-					{
-						Name:    "frps",
-						Image:   image,
-						Command: []string{"/frps", "-c", "/etc/frp/frps.toml"},
-						Ports: []corev1.ContainerPort{
-							{Name: "bind", ContainerPort: server.Spec.BindPort, Protocol: corev1.ProtocolTCP},
-						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "config", MountPath: "/etc/frp", ReadOnly: true},
-						},
-					},
-				},
+				Containers: containers,
 				Volumes: []corev1.Volume{
 					{
 						Name: "config",
@@ -228,6 +247,15 @@ func (r *NexusServerReconciler) reconcileService(ctx context.Context, server *tu
 		ports = []corev1.ServicePort{
 			{Name: "frp", Port: bindPort, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt32(bindPort)},
 		}
+	}
+
+	if server.Spec.DiscoveryPort > 0 {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "discovery",
+			Port:       server.Spec.DiscoveryPort,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt32(server.Spec.DiscoveryPort),
+		})
 	}
 
 	svc := &corev1.Service{

@@ -18,9 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -148,6 +150,115 @@ var _ = Describe("NexusServer gateway Service", func() {
 			var gw corev1.Service
 			err = k8sClient.Get(ctx, nsName(gwServerName+"-gateway"), &gw)
 			Expect(errors.IsNotFound(err)).To(BeTrue())
+		})
+	})
+})
+
+var _ = Describe("NexusServer discovery sidecar", func() {
+	const (
+		discNs         = "default"
+		discServerName = "hub-with-discovery"
+	)
+	ctx := context.Background()
+	nsName := func(name string) types.NamespacedName {
+		return types.NamespacedName{Namespace: discNs, Name: name}
+	}
+
+	AfterEach(func() {
+		srv := &tunnelv1alpha1.NexusServer{}
+		if err := k8sClient.Get(ctx, nsName(discServerName), srv); err == nil {
+			_ = k8sClient.Delete(ctx, srv)
+		}
+	})
+
+	Context("when discoveryPort is set", func() {
+		It("adds nexus-discovery sidecar with correct env vars", func() {
+			srv := &tunnelv1alpha1.NexusServer{
+				ObjectMeta: metav1.ObjectMeta{Name: discServerName, Namespace: discNs},
+				Spec: tunnelv1alpha1.NexusServerSpec{
+					BindPort:      7000,
+					VhostHTTPPort: 8080,
+					DiscoveryPort: 7001,
+					Image:         tunnelv1alpha1.ImageSpec{Repository: "registry.example.com/crd-tunnel", Tag: "1.0.0"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+
+			r := &NexusServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nsName(discServerName)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var dep appsv1.Deployment
+			Expect(k8sClient.Get(ctx, nsName(discServerName), &dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(2))
+
+			var disc corev1.Container
+			for _, c := range dep.Spec.Template.Spec.Containers {
+				if c.Name == "nexus-discovery" {
+					disc = c
+				}
+			}
+			Expect(disc.Name).To(Equal("nexus-discovery"))
+			Expect(disc.Command).To(Equal([]string{"/nexus-discovery"}))
+
+			envMap := map[string]string{}
+			for _, e := range disc.Env {
+				envMap[e.Name] = e.Value
+			}
+			Expect(envMap["DISCOVERY_PORT"]).To(Equal("7001"))
+			Expect(envMap["GATEWAY_FQDN"]).To(Equal(
+				fmt.Sprintf("%s-gateway.%s.svc.cluster.local", discServerName, discNs),
+			))
+			Expect(envMap["GATEWAY_PORT"]).To(Equal("8080"))
+			Expect(envMap["SERVER_NAME"]).To(Equal(discServerName))
+			Expect(envMap["SERVER_NAMESPACE"]).To(Equal(discNs))
+		})
+
+		It("exposes discovery port on the frps Service", func() {
+			srv := &tunnelv1alpha1.NexusServer{
+				ObjectMeta: metav1.ObjectMeta{Name: discServerName, Namespace: discNs},
+				Spec: tunnelv1alpha1.NexusServerSpec{
+					BindPort:      7000,
+					DiscoveryPort: 7001,
+					Image:         tunnelv1alpha1.ImageSpec{Repository: "registry.example.com/crd-tunnel", Tag: "1.0.0"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+
+			r := &NexusServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nsName(discServerName)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var svc corev1.Service
+			Expect(k8sClient.Get(ctx, nsName(discServerName), &svc)).To(Succeed())
+			ports := map[string]int32{}
+			for _, p := range svc.Spec.Ports {
+				ports[p.Name] = p.Port
+			}
+			Expect(ports["frp"]).To(Equal(int32(7000)))
+			Expect(ports["discovery"]).To(Equal(int32(7001)))
+		})
+	})
+
+	Context("when discoveryPort is 0", func() {
+		It("does not add nexus-discovery sidecar", func() {
+			srv := &tunnelv1alpha1.NexusServer{
+				ObjectMeta: metav1.ObjectMeta{Name: discServerName, Namespace: discNs},
+				Spec: tunnelv1alpha1.NexusServerSpec{
+					BindPort: 7000,
+					Image:    tunnelv1alpha1.ImageSpec{Repository: "registry.example.com/crd-tunnel", Tag: "1.0.0"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, srv)).To(Succeed())
+
+			r := &NexusServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nsName(discServerName)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var dep appsv1.Deployment
+			Expect(k8sClient.Get(ctx, nsName(discServerName), &dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(dep.Spec.Template.Spec.Containers[0].Name).To(Equal("frps"))
 		})
 	})
 })
