@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -74,6 +75,14 @@ var _ = Describe("CloudRestApiProxy Controller", func() {
 		if err := k8sClient.Get(ctx, nsName(crClient), spoke); errors.IsNotFound(err) {
 			Expect(k8sClient.Create(ctx, spoke)).To(Succeed())
 		}
+
+		// Pre-populate NexusClient gateway status.
+		var nc tunnelv1alpha1.NexusClient
+		Expect(k8sClient.Get(ctx, nsName(crClient), &nc)).To(Succeed())
+		nc.Status.GatewayFQDN = fmt.Sprintf("%s-gateway.%s.svc.cluster.local", crServer, ns)
+		nc.Status.GatewayPort = vhostPort
+		Expect(k8sClient.Status().Update(ctx, &nc)).To(Succeed())
+
 		// CloudRestApiProxy CR.
 		cr := &tunnelv1alpha1.CloudRestApiProxy{
 			ObjectMeta: metav1.ObjectMeta{Name: crName, Namespace: ns},
@@ -140,5 +149,17 @@ var _ = Describe("CloudRestApiProxy Controller", func() {
 		var hp tunnelv1alpha1.HTTPProxy
 		Expect(k8sClient.Get(ctx, nsName(crName+"-tunnel"), &hp)).To(
 			Satisfy(errors.IsNotFound))
+	})
+
+	It("requeues when NexusClient gateway not yet discovered", func() {
+		var nc tunnelv1alpha1.NexusClient
+		Expect(k8sClient.Get(ctx, nsName(crClient), &nc)).To(Succeed())
+		nc.Status.GatewayFQDN = ""
+		nc.Status.GatewayPort = 0
+		Expect(k8sClient.Status().Update(ctx, &nc)).To(Succeed())
+
+		result, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(crName)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(15 * time.Second))
 	})
 })

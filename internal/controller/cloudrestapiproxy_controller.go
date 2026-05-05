@@ -101,17 +101,11 @@ func (r *CloudRestApiProxyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	// Resolve NexusServer for gateway FQDN and vhostHTTPPort.
-	var server tunnelv1alpha1.NexusServer
-	if err := r.Get(ctx, types.NamespacedName{
-		Namespace: cr.Namespace,
-		Name:      spoke.Spec.ServerRef.Name,
-	}, &server); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("NexusServer not found, requeuing", "server", spoke.Spec.ServerRef.Name)
-			return ctrl.Result{RequeueAfter: cloudRestApiProxyRequeueDelay}, nil
-		}
-		return ctrl.Result{}, err
+	gatewayFQDN := spoke.Status.GatewayFQDN
+	gatewayPort := spoke.Status.GatewayPort
+	if gatewayFQDN == "" {
+		log.Info("gateway not yet discovered, requeuing")
+		return ctrl.Result{RequeueAfter: cloudRestApiProxyRequeueDelay}, nil
 	}
 
 	proxyPort := cr.Spec.ProxyPort
@@ -123,7 +117,6 @@ func (r *CloudRestApiProxyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		image = cr.Spec.Image.Repository + ":" + cr.Spec.Image.Tag
 	}
 	spokeName := spoke.Name
-	gatewayFQDN := fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, cr.Namespace)
 
 	if err := r.reconcileDeployment(ctx, &cr, image, proxyPort, spokeName); err != nil {
 		return ctrl.Result{}, err
@@ -135,7 +128,7 @@ func (r *CloudRestApiProxyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.syncStatus(ctx, &cr, server.Spec.VhostHTTPPort, spokeName, gatewayFQDN)
+	return ctrl.Result{}, r.syncStatus(ctx, &cr, gatewayPort, spokeName, gatewayFQDN)
 }
 
 func (r *CloudRestApiProxyReconciler) reconcileDeployment(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy, image string, proxyPort int32, spokeName string) error {
