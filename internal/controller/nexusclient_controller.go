@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,6 +53,8 @@ type NexusClientReconciler struct {
 	// TunnelImage is the default frpc container image used when NexusClient.spec.image
 	// is not set. Populated from the TUNNEL_IMAGE env var on the manager Deployment.
 	TunnelImage string
+	// HTTPClient is used for discovery endpoint calls. Nil means http.DefaultClient.
+	HTTPClient *http.Client
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch;create;update;patch;delete
@@ -127,10 +131,18 @@ func (r *NexusClientReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	// Update status.
+	// Resolve gateway coordinates and write to status.
+	gatewayFQDN, gatewayPort, err := r.resolveGateway(ctx, &spoke)
+	if err != nil {
+		log.Error(err, "gateway resolution failed, will retry")
+		return ctrl.Result{RequeueAfter: requeueDelay}, nil
+	}
+
 	updated := spoke.DeepCopy()
 	updated.Status.Phase = phaseRunning
 	updated.Status.ServerAddress = fmt.Sprintf("%s:%d", serverAddr, serverPort)
+	updated.Status.GatewayFQDN = gatewayFQDN
+	updated.Status.GatewayPort = gatewayPort
 	if err := r.Status().Update(ctx, updated); err != nil && !errors.IsConflict(err) {
 		return ctrl.Result{}, err
 	}
@@ -156,6 +168,52 @@ func (r *NexusClientReconciler) resolveServerAddress(ctx context.Context, spoke 
 		return spoke.Spec.ServerRef.Address, spoke.Spec.ServerRef.Port, nil
 	}
 	return "", 0, fmt.Errorf("serverRef must specify either name or address")
+}
+
+// resolveGateway returns the hub gateway FQDN and port.
+// If serverRef.name is set, looks up the local NexusServer CR.
+// If serverRef.discoveryPort is set, queries the discovery HTTP endpoint.
+// Returns empty strings if neither is configured.
+func (r *NexusClientReconciler) resolveGateway(ctx context.Context, spoke *tunnelv1alpha1.NexusClient) (fqdn string, port int32, err error) {
+	if spoke.Spec.ServerRef.Name != "" {
+		var server tunnelv1alpha1.NexusServer
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: spoke.Namespace,
+			Name:      spoke.Spec.ServerRef.Name,
+		}, &server); err != nil {
+			return "", 0, fmt.Errorf("get NexusServer %q for gateway: %w", spoke.Spec.ServerRef.Name, err)
+		}
+		return fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, spoke.Namespace),
+			server.Spec.VhostHTTPPort, nil
+	}
+	if spoke.Spec.ServerRef.DiscoveryPort > 0 {
+		url := fmt.Sprintf("http://%s:%d/api/nexus-info",
+			spoke.Spec.ServerRef.Address, spoke.Spec.ServerRef.DiscoveryPort)
+		tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(tctx, http.MethodGet, url, nil)
+		if err != nil {
+			return "", 0, fmt.Errorf("build discovery request: %w", err)
+		}
+		httpClient := r.HTTPClient
+		if httpClient == nil {
+			httpClient = http.DefaultClient
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return "", 0, fmt.Errorf("discovery request to %s: %w", url, err)
+		}
+		defer resp.Body.Close()
+		var info struct {
+			GatewayFQDN string `json:"gatewayFQDN"`
+			GatewayPort int32  `json:"gatewayPort"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			return "", 0, fmt.Errorf("decode discovery response from %s: %w", url, err)
+		}
+		return info.GatewayFQDN, info.GatewayPort, nil
+	}
+	return "", 0, nil
 }
 
 func (r *NexusClientReconciler) resolveAuthToken(ctx context.Context, spoke *tunnelv1alpha1.NexusClient) (string, error) {
