@@ -85,6 +85,14 @@ type NexusServerSpec struct {
 	// +optional
 	// +kubebuilder:default=ClusterIP
 	GatewayServiceType corev1.ServiceType `json:"gatewayServiceType,omitempty"`
+
+	// DiscoveryPort is the port the nexus-discovery sidecar listens on inside
+	// the frps pod. When non-zero, a nexus-discovery sidecar is injected into
+	// the frps Deployment and this port is added to the frps LoadBalancer Service.
+	// Spoke NexusClients with serverRef.discoveryPort set query this endpoint
+	// to auto-discover the hub gateway FQDN and vhostHTTPPort.
+	// +optional
+	DiscoveryPort int32 `json:"discoveryPort,omitempty"`
 }
 
 // NexusServerStatus defines the observed state of NexusServer.

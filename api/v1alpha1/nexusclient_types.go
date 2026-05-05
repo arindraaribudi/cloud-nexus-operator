@@ -35,6 +35,13 @@ type ServerRef struct {
 	// Port is an explicit server port (used when Name is empty).
 	// +optional
 	Port int32 `json:"port,omitempty"`
+
+	// DiscoveryPort is the nexus-discovery port on the server.
+	// When non-zero and Name is empty, the NexusClient controller calls
+	// http://{address}:{discoveryPort}/api/nexus-info to auto-discover
+	// the hub gateway FQDN and port, storing them in status.
+	// +optional
+	DiscoveryPort int32 `json:"discoveryPort,omitempty"`
 }
 
 // AdminSpec describes the frpc local admin API configuration.
@@ -81,6 +88,16 @@ type NexusClientStatus struct {
 	// ServerAddress is the resolved server address (host:port).
 	// +optional
 	ServerAddress string `json:"serverAddress,omitempty"`
+
+	// GatewayFQDN is the hub-side gateway service FQDN, populated by the
+	// NexusClient controller via local NexusServer lookup or discovery endpoint.
+	// Read by RegistryProxy and CloudRestApiProxy controllers.
+	// +optional
+	GatewayFQDN string `json:"gatewayFQDN,omitempty"`
+
+	// GatewayPort is the vhostHTTPPort on the hub gateway.
+	// +optional
+	GatewayPort int32 `json:"gatewayPort,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

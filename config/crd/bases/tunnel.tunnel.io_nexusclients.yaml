@@ -108,6 +108,14 @@ spec:
                     description: Address is an explicit server host or IP (used when
                       Name is empty).
                     type: string
+                  discoveryPort:
+                    description: |-
+                      DiscoveryPort is the nexus-discovery port on the server.
+                      When non-zero and Name is empty, the NexusClient controller calls
+                      http://{address}:{discoveryPort}/api/nexus-info to auto-discover
+                      the hub gateway FQDN and port, storing them in status.
+                    format: int32
+                    type: integer
                   name:
                     description: |-
                       Name references an NexusServer in the same namespace; the operator will
@@ -184,6 +192,16 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              gatewayFQDN:
+                description: |-
+                  GatewayFQDN is the hub-side gateway service FQDN, populated by the
+                  NexusClient controller via local NexusServer lookup or discovery endpoint.
+                  Read by RegistryProxy and CloudRestApiProxy controllers.
+                type: string
+              gatewayPort:
+                description: GatewayPort is the vhostHTTPPort on the hub gateway.
+                format: int32
+                type: integer
               phase:
                 description: Phase is the current lifecycle phase.
                 type: string
