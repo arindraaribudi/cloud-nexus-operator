@@ -111,20 +111,12 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		proxyPort = *rp.Spec.ProxyPort
 	}
 
-	// Resolve NexusServer for gateway FQDN.
-	var server tunnelv1alpha1.NexusServer
-	if err := r.Get(ctx, types.NamespacedName{
-		Namespace: rp.Namespace,
-		Name:      spoke.Spec.ServerRef.Name,
-	}, &server); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("NexusServer not found, requeuing", "server", spoke.Spec.ServerRef.Name)
-			return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
-		}
-		return ctrl.Result{}, err
+	gatewayFQDN := spoke.Status.GatewayFQDN
+	gatewayPort := spoke.Status.GatewayPort
+	if gatewayFQDN == "" {
+		log.Info("gateway not yet discovered, requeuing")
+		return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
 	}
-
-	gatewayFQDN := fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, rp.Namespace)
 	spokeName := spoke.Name
 
 	if err := r.reconcileProxyDeployment(ctx, &rp, image, proxyPort, spokeName); err != nil {
@@ -137,7 +129,7 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.syncStatus(ctx, &rp, server.Spec.VhostHTTPPort, spokeName, gatewayFQDN)
+	return ctrl.Result{}, r.syncStatus(ctx, &rp, gatewayPort, spokeName, gatewayFQDN)
 }
 
 func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, image string, proxyPort int32, spokeName string) error {

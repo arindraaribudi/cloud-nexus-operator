@@ -75,6 +75,13 @@ var _ = Describe("RegistryProxy Controller", func() {
 			Expect(k8sClient.Create(ctx, spoke)).To(Succeed())
 		}
 
+		// Pre-populate NexusClient gateway status (simulates NexusClient controller having run).
+		var nc tunnelv1alpha1.NexusClient
+		Expect(k8sClient.Get(ctx, nsName(clientName), &nc)).To(Succeed())
+		nc.Status.GatewayFQDN = fmt.Sprintf("%s-gateway.%s.svc.cluster.local", serverName, ns)
+		nc.Status.GatewayPort = 8080
+		Expect(k8sClient.Status().Update(ctx, &nc)).To(Succeed())
+
 		// Create RegistryProxy.
 		rp := &tunnelv1alpha1.RegistryProxy{
 			ObjectMeta: metav1.ObjectMeta{Name: rpName, Namespace: ns},
@@ -155,6 +162,19 @@ var _ = Describe("RegistryProxy Controller", func() {
 		var spoke tunnelv1alpha1.NexusClient
 		Expect(k8sClient.Get(ctx, nsName(clientName), &spoke)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, &spoke)).To(Succeed())
+
+		result, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(15 * time.Second))
+	})
+
+	It("requeues when NexusClient gateway not yet discovered", func() {
+		// Clear the gateway status set in BeforeEach.
+		var nc tunnelv1alpha1.NexusClient
+		Expect(k8sClient.Get(ctx, nsName(clientName), &nc)).To(Succeed())
+		nc.Status.GatewayFQDN = ""
+		nc.Status.GatewayPort = 0
+		Expect(k8sClient.Status().Update(ctx, &nc)).To(Succeed())
 
 		result, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nsName(rpName)})
 		Expect(err).NotTo(HaveOccurred())
