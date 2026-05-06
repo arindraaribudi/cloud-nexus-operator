@@ -222,15 +222,17 @@ func main() {
 		}
 	}
 	if err := (&controller.RegistryProxyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		TunnelImage: os.Getenv("TUNNEL_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "RegistryProxy")
 		os.Exit(1)
 	}
 	if err := (&controller.CloudRestApiProxyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		TunnelImage: os.Getenv("TUNNEL_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "CloudRestApiProxy")
 		os.Exit(1)

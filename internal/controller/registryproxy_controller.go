@@ -44,6 +44,9 @@ const registryProxyRequeueDelay = 15 * time.Second
 type RegistryProxyReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// TunnelImage is the default container image used when neither the RegistryProxy
+	// spec nor the NexusClient spec sets an explicit image. Populated from TUNNEL_IMAGE env var.
+	TunnelImage string
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies,verbs=get;list;watch;create;update;patch;delete
@@ -100,10 +103,16 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Resolve image: use spec.Image if set, else inherit from NexusClient.
+	// Resolve image: RegistryProxy spec > NexusClient spec > TunnelImage env > hardcoded default.
 	image := spoke.Spec.Image.Repository + ":" + spoke.Spec.Image.Tag
+	if spoke.Spec.Image.Repository == "" {
+		image = r.TunnelImage
+	}
 	if rp.Spec.Image != nil && rp.Spec.Image.Repository != "" {
 		image = rp.Spec.Image.Repository + ":" + rp.Spec.Image.Tag
+	}
+	if image == "" || image == ":" {
+		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"
 	}
 	// Resolve proxy port.
 	proxyPort := int32(5000)

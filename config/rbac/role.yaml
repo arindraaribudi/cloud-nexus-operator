@@ -41,6 +41,7 @@ rules:
 - apiGroups:
   - tunnel.tunnel.io
   resources:
+  - cloudrestapiproxies
   - frpclients
   - frpservers
   - httpproxies
@@ -63,6 +64,7 @@ rules:
 - apiGroups:
   - tunnel.tunnel.io
   resources:
+  - cloudrestapiproxies/finalizers
   - frpclients/finalizers
   - frpservers/finalizers
   - httpproxies/finalizers
@@ -79,6 +81,7 @@ rules:
 - apiGroups:
   - tunnel.tunnel.io
   resources:
+  - cloudrestapiproxies/status
   - frpclients/status
   - frpservers/status
   - httpproxies/status
@@ -94,3 +97,12 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - tunnel.tunnel.io
+  resources:
+  - nexusclients
+  - nexusservers
+  verbs:
+  - get
+  - list
+  - watch

@@ -1,6 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Change this value to deploy the operator into a different namespace.
+namespace: crd-tunnel-system
+
 resources:
   - bundle-install.yaml
 
@@ -8,31 +11,27 @@ resources:
 images:
   # Operator controller-manager
   - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator
-    newName: <your-registry>/cloud-nexus-operator
-    newTag: "<your-tag>"
+    newName: arindraaribudi/cloud-nexus-operator
+    newTag: operator-1.0.15
   # Webhook server
   - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
-    newName: <your-registry>/crd-tunnel-webhook
-    newTag: "<your-tag>"
+    newName: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
+    newTag: 1.0.3
 
-# The tunnel image (frpc / frps) is passed to the operator via the TUNNEL_IMAGE
-# env var and used as the default when NexusClient / NexusServer do not set
-# spec.image.  Override it with a strategic merge patch:
-#
-# patches:
-#   - target:
-#       kind: Deployment
-#       name: cloud-nexus-operator-controller-manager
-#     patch: |-
-#       apiVersion: apps/v1
-#       kind: Deployment
-#       metadata:
-#         name: cloud-nexus-operator-controller-manager
-#       spec:
-#         template:
-#           spec:
-#             containers:
-#             - name: manager
-#               env:
-#               - name: TUNNEL_IMAGE
-#                 value: "<your-registry>/crd-tunnel:<your-tag>"
+patches:
+  - target:
+      kind: Deployment
+      name: cloud-nexus-operator-controller-manager
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cloud-nexus-operator-controller-manager
+      spec:
+        template:
+          spec:
+            containers:
+            - name: manager
+              env:
+              - name: TUNNEL_IMAGE
+                value: "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"

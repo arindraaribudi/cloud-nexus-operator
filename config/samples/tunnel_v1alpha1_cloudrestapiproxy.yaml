@@ -1,4 +1,4 @@
-apiVersion: tunnel.io/v1alpha1
+apiVersion: tunnel.tunnel.io/v1alpha1
 kind: CloudRestApiProxy
 metadata:
   name: spoke1-cloud

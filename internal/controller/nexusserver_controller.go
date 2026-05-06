@@ -268,30 +268,62 @@ func (r *NexusServerReconciler) reconcileService(ctx context.Context, server *tu
 		if err := controllerutil.SetControllerReference(server, svc, r.Scheme); err != nil {
 			return err
 		}
-		svc.Annotations = server.Spec.Service.Annotations
+		// Preserve node ports assigned by Kubernetes to avoid constant diffs.
+		existingNodePorts := map[string]int32{}
+		for _, p := range svc.Spec.Ports {
+			if p.NodePort != 0 {
+				existingNodePorts[p.Name] = p.NodePort
+			}
+		}
+		merged := make([]corev1.ServicePort, len(ports))
+		for i, p := range ports {
+			// Default targetPort to port value if unset.
+			if p.TargetPort == (intstr.IntOrString{}) {
+				p.TargetPort = intstr.FromInt32(p.Port)
+			}
+			if np, ok := existingNodePorts[p.Name]; ok {
+				p.NodePort = np
+			}
+			merged[i] = p
+		}
+		// Merge spec annotations into existing ones — don't remove annotations
+		// added by GKE/Kubernetes controllers (e.g. cloud.google.com/neg-status).
+		if svc.Annotations == nil {
+			svc.Annotations = make(map[string]string)
+		}
+		for k, v := range server.Spec.Service.Annotations {
+			svc.Annotations[k] = v
+		}
 		svc.Spec.Type = svcType
 		svc.Spec.Selector = map[string]string{"frpserver": server.Name}
-		svc.Spec.Ports = ports
+		svc.Spec.Ports = merged
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	// Update status with address and port.
-	updated := server.DeepCopy()
+	// Compute desired status.
+	newAddr := ""
 	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer && len(svc.Status.LoadBalancer.Ingress) > 0 {
 		ing := svc.Status.LoadBalancer.Ingress[0]
 		if ing.IP != "" {
-			updated.Status.Address = ing.IP
+			newAddr = ing.IP
 		} else {
-			updated.Status.Address = ing.Hostname
+			newAddr = ing.Hostname
 		}
 	}
-	updated.Status.Port = server.Spec.BindPort
-	if updated.Status.Port == 0 {
-		updated.Status.Port = 7000
+	newPort := server.Spec.BindPort
+	if newPort == 0 {
+		newPort = 7000
 	}
+	// Only write status when it actually changed to avoid spurious reconciles.
+	if server.Status.Address == newAddr && server.Status.Port == newPort {
+		return nil
+	}
+	updated := server.DeepCopy()
+	updated.Status.Address = newAddr
+	updated.Status.Port = newPort
 	return r.Status().Update(ctx, updated)
 }
 

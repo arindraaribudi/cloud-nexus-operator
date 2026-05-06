@@ -45,6 +45,9 @@ const cloudRestApiProxyRequeueDelay = 15 * time.Second
 type CloudRestApiProxyReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// TunnelImage is the default container image used when neither the CloudRestApiProxy
+	// spec nor the NexusClient spec sets an explicit image. Populated from TUNNEL_IMAGE env var.
+	TunnelImage string
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=cloudrestapiproxies,verbs=get;list;watch;create;update;patch;delete
@@ -112,9 +115,16 @@ func (r *CloudRestApiProxyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if proxyPort == 0 {
 		proxyPort = 8080
 	}
+	// Resolve image: CloudRestApiProxy spec > NexusClient spec > TunnelImage env > hardcoded default.
 	image := spoke.Spec.Image.Repository + ":" + spoke.Spec.Image.Tag
+	if spoke.Spec.Image.Repository == "" {
+		image = r.TunnelImage
+	}
 	if cr.Spec.Image != nil && cr.Spec.Image.Repository != "" {
 		image = cr.Spec.Image.Repository + ":" + cr.Spec.Image.Tag
+	}
+	if image == "" || image == ":" {
+		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"
 	}
 	spokeName := spoke.Name
 
