@@ -47,6 +47,17 @@ type handler struct {
 	ecrMu     sync.Mutex
 }
 
+// txnWriter wraps http.ResponseWriter to capture the status code written to the client.
+type txnWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (tw *txnWriter) WriteHeader(code int) {
+	tw.code = code
+	tw.ResponseWriter.WriteHeader(code)
+}
+
 func main() {
 	port := flag.Int("port", 5000, "port the registry proxy listens on")
 	flag.Parse()
@@ -70,20 +81,56 @@ func main() {
 }
 
 func (h *handler) handleRequest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	tw := &txnWriter{ResponseWriter: w, code: http.StatusOK}
+	w = tw
+
+	var (
+		upstreamHost string
+		imagePath    string
+		scheme       string
+		outcome      string
+		cloudStatus  int
+	)
+
+	defer func() {
+		logArgs := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", r.URL.RawQuery,
+			"remote_addr", r.RemoteAddr,
+			"upstream_host", upstreamHost,
+			"image_path", imagePath,
+			"auth_scheme", scheme,
+			"outcome", outcome,
+			"proxy_status", tw.code,
+			"latency_ms", time.Since(start).Milliseconds(),
+		}
+		if cloudStatus != 0 {
+			logArgs = append(logArgs, "cloud_status", cloudStatus)
+		}
+		slog.Info("txn", logArgs...)
+	}()
+
 	// /v2/ ping — return 200 so Docker clients don't hit the auth challenge.
 	if r.URL.Path == "/v2/" || r.URL.Path == "/v2" {
+		outcome = "ping"
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	upstreamHost, imagePath, ok := parseUpstream(r.URL.Path)
+	var ok bool
+	upstreamHost, imagePath, ok = parseUpstream(r.URL.Path)
 	if !ok {
+		outcome = "bad_request"
 		http.Error(w, "registry-proxy: cannot parse upstream host from path", http.StatusBadRequest)
 		return
 	}
 
+	scheme = authScheme(upstreamHost)
 	authHeader, err := h.buildAuthHeader(r.Context(), upstreamHost)
 	if err != nil {
+		outcome = "auth_error"
 		slog.Error("auth failed", "upstream", upstreamHost, "error", err)
 		http.Error(w, "registry-proxy: auth error", http.StatusBadGateway)
 		return
@@ -106,6 +153,8 @@ func (h *handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			cloudStatus = resp.StatusCode
+			outcome = "ok"
 			// AR blob downloads return a relative redirect (e.g. /artifacts-downloads/...).
 			// The download endpoint requires no auth (the path token is short-lived).
 			// Rewrite the Location to an absolute URL so Docker follows it directly to
@@ -117,6 +166,11 @@ func (h *handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			return nil
+		},
+		ErrorHandler: func(ew http.ResponseWriter, er *http.Request, eerr error) {
+			outcome = "upstream_error"
+			slog.Error("upstream error", "upstream", upstreamHost, "error", eerr)
+			http.Error(ew, "registry-proxy: upstream error", http.StatusBadGateway)
 		},
 	}
 	proxy.ServeHTTP(w, r)

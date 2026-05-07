@@ -4,7 +4,7 @@ IMG ?= controller:latest
 # FRP operator image settings
 REGISTRY ?= asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops
 FRP_VERSION ?= v0.68.1
-TUNNEL_VERSION ?= 1.0.6
+TUNNEL_VERSION ?= 1.0.7
 OPERATOR_VERSION ?= 1.0.15
 WEBHOOK_VERSION ?= 1.0.3
 PLATFORMS ?= linux/amd64,linux/arm64,linux/arm/v7

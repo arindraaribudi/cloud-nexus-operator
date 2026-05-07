@@ -50,6 +50,17 @@ type handler struct {
 	gcpMu sync.Mutex
 }
 
+// txnWriter wraps http.ResponseWriter to capture the status code written to the client.
+type txnWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (tw *txnWriter) WriteHeader(code int) {
+	tw.code = code
+	tw.ResponseWriter.WriteHeader(code)
+}
+
 func main() {
 	stripPrefix := os.Getenv("STRIP_PREFIX")
 	if stripPrefix == "" {
@@ -79,17 +90,54 @@ func main() {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	cloudFQDN, apiPath, err := parseCloudRequest(r.URL.Path, h.stripPrefix)
+	start := time.Now()
+	tw := &txnWriter{ResponseWriter: w, code: http.StatusOK}
+	w = tw
+
+	var (
+		cloudFQDN   string
+		apiPath     string
+		provider    string
+		outcome     string
+		cloudStatus int
+		bodySize    int
+	)
+
+	defer func() {
+		logArgs := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", r.URL.RawQuery,
+			"remote_addr", r.RemoteAddr,
+			"body_size", bodySize,
+			"cloud_fqdn", cloudFQDN,
+			"api_path", apiPath,
+			"provider", provider,
+			"outcome", outcome,
+			"proxy_status", tw.code,
+			"latency_ms", time.Since(start).Milliseconds(),
+		}
+		if cloudStatus != 0 {
+			logArgs = append(logArgs, "cloud_status", cloudStatus)
+		}
+		slog.Info("txn", logArgs...)
+	}()
+
+	var err error
+	cloudFQDN, apiPath, err = parseCloudRequest(r.URL.Path, h.stripPrefix)
 	if err != nil {
+		outcome = "bad_request"
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !isAllowedDomain(cloudFQDN, h.allowedDomains) {
+		outcome = "domain_forbidden"
 		http.Error(w, "domain not in allowedDomains", http.StatusForbidden)
 		return
 	}
-	provider := cloudProvider(cloudFQDN)
+	provider = cloudProvider(cloudFQDN)
 	if provider == "" {
+		outcome = "unsupported_provider"
 		http.Error(w, "unsupported cloud domain: "+cloudFQDN, http.StatusBadRequest)
 		return
 	}
@@ -98,10 +146,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		bodyBytes, err = io.ReadAll(r.Body)
 		if err != nil {
+			outcome = "read_body_error"
 			http.Error(w, "failed to read body", http.StatusInternalServerError)
 			return
 		}
 	}
+	bodySize = len(bodyBytes)
 
 	upstreamURL := &url.URL{
 		Scheme:   "https",
@@ -112,6 +162,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
+		outcome = "build_request_error"
 		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
 		return
 	}
@@ -129,21 +180,25 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch provider {
 	case "aws":
 		if err := h.signAWS(r.Context(), outReq, bodyBytes, cloudFQDN); err != nil {
+			outcome = "auth_error"
 			writeJSONError(w, http.StatusBadGateway, "AWS auth error: "+err.Error())
 			return
 		}
 	case "gcp":
 		if err := h.signGCP(r.Context(), outReq); err != nil {
+			outcome = "auth_error"
 			writeJSONError(w, http.StatusBadGateway, "GCP auth error: "+err.Error())
 			return
 		}
 	case "azure":
 		if err := signAzure(r.Context(), outReq, cloudFQDN); err != nil {
+			outcome = "auth_error"
 			writeJSONError(w, http.StatusBadGateway, "Azure auth error: "+err.Error())
 			return
 		}
 	case "tencent":
 		if err := h.signTencent(outReq, bodyBytes); err != nil {
+			outcome = "auth_error"
 			writeJSONError(w, http.StatusBadGateway, "Tencent auth error: "+err.Error())
 			return
 		}
@@ -157,10 +212,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := client.Do(outReq)
 	if err != nil {
+		outcome = "upstream_error"
 		writeJSONError(w, http.StatusBadGateway, "upstream error: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
+
+	cloudStatus = resp.StatusCode
+	outcome = "ok"
 
 	for k, vs := range resp.Header {
 		for _, v := range vs {
