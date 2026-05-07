@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -78,6 +79,20 @@ type NexusServerSpec struct {
 	// where <namespace> is the NexusServer's namespace.
 	// +optional
 	OperatorWebhookAddr string `json:"operatorWebhookAddr,omitempty"`
+
+	// GatewayServiceType is the K8s Service type for the unified HTTP gateway.
+	// The gateway Service is only created when vhostHTTPPort is non-zero.
+	// +optional
+	// +kubebuilder:default=ClusterIP
+	GatewayServiceType corev1.ServiceType `json:"gatewayServiceType,omitempty"`
+
+	// DiscoveryPort is the port the nexus-discovery sidecar listens on inside
+	// the frps pod. When non-zero, a nexus-discovery sidecar is injected into
+	// the frps Deployment and this port is added to the frps LoadBalancer Service.
+	// Spoke NexusClients with serverRef.discoveryPort set query this endpoint
+	// to auto-discover the hub gateway FQDN and vhostHTTPPort.
+	// +optional
+	DiscoveryPort int32 `json:"discoveryPort,omitempty"`
 }
 
 // NexusServerStatus defines the observed state of NexusServer.

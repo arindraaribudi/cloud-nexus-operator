@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Change this value to deploy the operator into a different namespace.
+namespace: crd-tunnel-system
+
+resources:
+  - bundle-install.yaml
+
+# Replace newName / newTag with your target values before deploying.
+images:
+  # Operator controller-manager
+  - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator
+    newName: arindraaribudi/cloud-nexus-operator
+    newTag: operator-1.0.15
+  # Webhook server
+  - name: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
+    newName: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook
+    newTag: 1.0.3
+
+patches:
+  - target:
+      kind: Deployment
+      name: cloud-nexus-operator-controller-manager
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cloud-nexus-operator-controller-manager
+      spec:
+        template:
+          spec:
+            containers:
+            - name: manager
+              env:
+              - name: TUNNEL_IMAGE
+                value: "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"

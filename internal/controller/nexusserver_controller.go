@@ -44,6 +44,9 @@ type NexusServerReconciler struct {
 	// default [[httpPlugins]] addr when NexusServer.spec.operatorWebhookAddr is empty.
 	// When unset, falls back to controller-manager-frps-plugin.<server-namespace>.svc.cluster.local:9090.
 	WebhookServiceAddr string
+	// TunnelImage is the default frps container image used when NexusServer.spec.image
+	// is not set. Populated from the TUNNEL_IMAGE env var on the manager Deployment.
+	TunnelImage string
 }
 
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpservers,verbs=get;list;watch;create;update;patch;delete
@@ -102,6 +105,9 @@ func (r *NexusServerReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.reconcileService(ctx, &server); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.reconcileGatewayService(ctx, &server); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -154,7 +160,11 @@ func (r *NexusServerReconciler) reconcileDeployment(ctx context.Context, server 
 
 	image := server.Spec.Image.Repository + ":" + server.Spec.Image.Tag
 	if server.Spec.Image.Repository == "" {
-		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		if r.TunnelImage != "" {
+			image = r.TunnelImage
+		} else {
+			image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.3"
+		}
 	}
 
 	dep := &appsv1.Deployment{
@@ -170,22 +180,41 @@ func (r *NexusServerReconciler) reconcileDeployment(ctx context.Context, server 
 		labels := map[string]string{"app": "frpserver", "frpserver": server.Name}
 		dep.Spec.Replicas = &replicas
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		containers := []corev1.Container{
+			{
+				Name:    "frps",
+				Image:   image,
+				Command: []string{"/frps", "-c", "/etc/frp/frps.toml"},
+				Ports: []corev1.ContainerPort{
+					{Name: "bind", ContainerPort: server.Spec.BindPort, Protocol: corev1.ProtocolTCP},
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "config", MountPath: "/etc/frp", ReadOnly: true},
+				},
+			},
+		}
+		if server.Spec.DiscoveryPort > 0 {
+			gatewayFQDN := fmt.Sprintf("%s-gateway.%s.svc.cluster.local", server.Name, server.Namespace)
+			containers = append(containers, corev1.Container{
+				Name:    "nexus-discovery",
+				Image:   image,
+				Command: []string{"/nexus-discovery"},
+				Ports: []corev1.ContainerPort{
+					{Name: "discovery", ContainerPort: server.Spec.DiscoveryPort, Protocol: corev1.ProtocolTCP},
+				},
+				Env: []corev1.EnvVar{
+					{Name: "DISCOVERY_PORT", Value: fmt.Sprint(server.Spec.DiscoveryPort)},
+					{Name: "GATEWAY_FQDN", Value: gatewayFQDN},
+					{Name: "GATEWAY_PORT", Value: fmt.Sprint(server.Spec.VhostHTTPPort)},
+					{Name: "SERVER_NAME", Value: server.Name},
+					{Name: "SERVER_NAMESPACE", Value: server.Namespace},
+				},
+			})
+		}
 		dep.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{
-				Containers: []corev1.Container{
-					{
-						Name:    "frps",
-						Image:   image,
-						Command: []string{"/frps", "-c", "/etc/frp/frps.toml"},
-						Ports: []corev1.ContainerPort{
-							{Name: "bind", ContainerPort: server.Spec.BindPort, Protocol: corev1.ProtocolTCP},
-						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "config", MountPath: "/etc/frp", ReadOnly: true},
-						},
-					},
-				},
+				Containers: containers,
 				Volumes: []corev1.Volume{
 					{
 						Name: "config",
@@ -220,6 +249,15 @@ func (r *NexusServerReconciler) reconcileService(ctx context.Context, server *tu
 		}
 	}
 
+	if server.Spec.DiscoveryPort > 0 {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "discovery",
+			Port:       server.Spec.DiscoveryPort,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt32(server.Spec.DiscoveryPort),
+		})
+	}
+
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      server.Name,
@@ -230,31 +268,96 @@ func (r *NexusServerReconciler) reconcileService(ctx context.Context, server *tu
 		if err := controllerutil.SetControllerReference(server, svc, r.Scheme); err != nil {
 			return err
 		}
-		svc.Annotations = server.Spec.Service.Annotations
+		// Preserve node ports assigned by Kubernetes to avoid constant diffs.
+		existingNodePorts := map[string]int32{}
+		for _, p := range svc.Spec.Ports {
+			if p.NodePort != 0 {
+				existingNodePorts[p.Name] = p.NodePort
+			}
+		}
+		merged := make([]corev1.ServicePort, len(ports))
+		for i, p := range ports {
+			// Default targetPort to port value if unset.
+			if p.TargetPort == (intstr.IntOrString{}) {
+				p.TargetPort = intstr.FromInt32(p.Port)
+			}
+			if np, ok := existingNodePorts[p.Name]; ok {
+				p.NodePort = np
+			}
+			merged[i] = p
+		}
+		// Merge spec annotations into existing ones — don't remove annotations
+		// added by GKE/Kubernetes controllers (e.g. cloud.google.com/neg-status).
+		if svc.Annotations == nil {
+			svc.Annotations = make(map[string]string)
+		}
+		for k, v := range server.Spec.Service.Annotations {
+			svc.Annotations[k] = v
+		}
 		svc.Spec.Type = svcType
 		svc.Spec.Selector = map[string]string{"frpserver": server.Name}
-		svc.Spec.Ports = ports
+		svc.Spec.Ports = merged
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	// Update status with address and port.
-	updated := server.DeepCopy()
+	// Compute desired status.
+	newAddr := ""
 	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer && len(svc.Status.LoadBalancer.Ingress) > 0 {
 		ing := svc.Status.LoadBalancer.Ingress[0]
 		if ing.IP != "" {
-			updated.Status.Address = ing.IP
+			newAddr = ing.IP
 		} else {
-			updated.Status.Address = ing.Hostname
+			newAddr = ing.Hostname
 		}
 	}
-	updated.Status.Port = server.Spec.BindPort
-	if updated.Status.Port == 0 {
-		updated.Status.Port = 7000
+	newPort := server.Spec.BindPort
+	if newPort == 0 {
+		newPort = 7000
 	}
+	// Only write status when it actually changed to avoid spurious reconciles.
+	if server.Status.Address == newAddr && server.Status.Port == newPort {
+		return nil
+	}
+	updated := server.DeepCopy()
+	updated.Status.Address = newAddr
+	updated.Status.Port = newPort
 	return r.Status().Update(ctx, updated)
+}
+
+func (r *NexusServerReconciler) reconcileGatewayService(ctx context.Context, server *tunnelv1alpha1.NexusServer) error {
+	if server.Spec.VhostHTTPPort == 0 {
+		return nil
+	}
+	svcType := server.Spec.GatewayServiceType
+	if svcType == "" {
+		svcType = corev1.ServiceTypeClusterIP
+	}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      server.Name + "-gateway",
+			Namespace: server.Namespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		if err := controllerutil.SetControllerReference(server, svc, r.Scheme); err != nil {
+			return err
+		}
+		svc.Spec.Type = svcType
+		svc.Spec.Selector = map[string]string{"frpserver": server.Name}
+		svc.Spec.Ports = []corev1.ServicePort{
+			{
+				Name:       "vhost-http",
+				Port:       server.Spec.VhostHTTPPort,
+				Protocol:   corev1.ProtocolTCP,
+				TargetPort: intstr.FromInt32(server.Spec.VhostHTTPPort),
+			},
+		}
+		return nil
+	})
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,31 +39,31 @@ import (
 	tunnelv1alpha1 "tunnel.io/cloud-nexus-operator/api/v1alpha1"
 )
 
-const registryProxyRequeueDelay = 15 * time.Second
+const cloudRestApiProxyRequeueDelay = 15 * time.Second
 
-// RegistryProxyReconciler reconciles a RegistryProxy object.
-type RegistryProxyReconciler struct {
+// CloudRestApiProxyReconciler reconciles a CloudRestApiProxy object.
+type CloudRestApiProxyReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	// TunnelImage is the default container image used when neither the RegistryProxy
+	// TunnelImage is the default container image used when neither the CloudRestApiProxy
 	// spec nor the NexusClient spec sets an explicit image. Populated from TUNNEL_IMAGE env var.
 	TunnelImage string
 }
 
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=registryproxies/finalizers,verbs=update
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=cloudrestapiproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=cloudrestapiproxies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=cloudrestapiproxies/finalizers,verbs=update
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=httpproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=nexusclients,verbs=get;list;watch
 // +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=nexusservers,verbs=get;list;watch
-// +kubebuilder:rbac:groups=tunnel.tunnel.io,resources=frpclients,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
-func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *CloudRestApiProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var rp tunnelv1alpha1.RegistryProxy
-	if err := r.Get(ctx, req.NamespacedName, &rp); err != nil {
+	var cr tunnelv1alpha1.CloudRestApiProxy
+	if err := r.Get(ctx, req.NamespacedName, &cr); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -70,22 +71,22 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Handle deletion.
-	if !rp.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(&rp, tunnelv1alpha1.RegistryCleanupFinalizer) {
-			if err := r.deleteOwnedResources(ctx, &rp); err != nil {
+	if !cr.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&cr, tunnelv1alpha1.CloudRestApiProxyCleanupFinalizer) {
+			if err := r.deleteOwnedResources(ctx, &cr); err != nil {
 				log.Error(err, "cleanup failed")
-				return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
+				return ctrl.Result{RequeueAfter: cloudRestApiProxyRequeueDelay}, nil
 			}
-			controllerutil.RemoveFinalizer(&rp, tunnelv1alpha1.RegistryCleanupFinalizer)
-			return ctrl.Result{}, r.Update(ctx, &rp)
+			controllerutil.RemoveFinalizer(&cr, tunnelv1alpha1.CloudRestApiProxyCleanupFinalizer)
+			return ctrl.Result{}, r.Update(ctx, &cr)
 		}
 		return ctrl.Result{}, nil
 	}
 
 	// Ensure finalizer.
-	if !controllerutil.ContainsFinalizer(&rp, tunnelv1alpha1.RegistryCleanupFinalizer) {
-		controllerutil.AddFinalizer(&rp, tunnelv1alpha1.RegistryCleanupFinalizer)
-		if err := r.Update(ctx, &rp); err != nil {
+	if !controllerutil.ContainsFinalizer(&cr, tunnelv1alpha1.CloudRestApiProxyCleanupFinalizer) {
+		controllerutil.AddFinalizer(&cr, tunnelv1alpha1.CloudRestApiProxyCleanupFinalizer)
+		if err := r.Update(ctx, &cr); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -93,84 +94,87 @@ func (r *RegistryProxyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Resolve NexusClient.
 	var spoke tunnelv1alpha1.NexusClient
 	if err := r.Get(ctx, types.NamespacedName{
-		Namespace: rp.Namespace,
-		Name:      rp.Spec.ClientRef.Name,
+		Namespace: cr.Namespace,
+		Name:      cr.Spec.ClientRef.Name,
 	}, &spoke); err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("NexusClient not found, requeuing", "client", rp.Spec.ClientRef.Name)
-			return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
+			log.Info("NexusClient not found, requeuing", "client", cr.Spec.ClientRef.Name)
+			return ctrl.Result{RequeueAfter: cloudRestApiProxyRequeueDelay}, nil
 		}
 		return ctrl.Result{}, err
-	}
-
-	// Resolve image: RegistryProxy spec > NexusClient spec > TunnelImage env > hardcoded default.
-	image := spoke.Spec.Image.Repository + ":" + spoke.Spec.Image.Tag
-	if spoke.Spec.Image.Repository == "" {
-		image = r.TunnelImage
-	}
-	if rp.Spec.Image != nil && rp.Spec.Image.Repository != "" {
-		image = rp.Spec.Image.Repository + ":" + rp.Spec.Image.Tag
-	}
-	if image == "" || image == ":" {
-		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"
-	}
-	// Resolve proxy port.
-	proxyPort := int32(5000)
-	if rp.Spec.ProxyPort != nil {
-		proxyPort = *rp.Spec.ProxyPort
 	}
 
 	gatewayFQDN := spoke.Status.GatewayFQDN
 	gatewayPort := spoke.Status.GatewayPort
 	if gatewayFQDN == "" {
 		log.Info("gateway not yet discovered, requeuing")
-		return ctrl.Result{RequeueAfter: registryProxyRequeueDelay}, nil
+		return ctrl.Result{RequeueAfter: cloudRestApiProxyRequeueDelay}, nil
+	}
+
+	proxyPort := cr.Spec.ProxyPort
+	if proxyPort == 0 {
+		proxyPort = 8080
+	}
+	// Resolve image: CloudRestApiProxy spec > NexusClient spec > TunnelImage env > hardcoded default.
+	image := spoke.Spec.Image.Repository + ":" + spoke.Spec.Image.Tag
+	if spoke.Spec.Image.Repository == "" {
+		image = r.TunnelImage
+	}
+	if cr.Spec.Image != nil && cr.Spec.Image.Repository != "" {
+		image = cr.Spec.Image.Repository + ":" + cr.Spec.Image.Tag
+	}
+	if image == "" || image == ":" {
+		image = "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"
 	}
 	spokeName := spoke.Name
 
-	if err := r.reconcileProxyDeployment(ctx, &rp, image, proxyPort, spokeName); err != nil {
+	if err := r.reconcileDeployment(ctx, &cr, image, proxyPort, spokeName); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcileProxyService(ctx, &rp, proxyPort); err != nil {
+	if err := r.reconcileService(ctx, &cr, proxyPort); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcileHTTPProxy(ctx, &rp, proxyPort, spokeName, gatewayFQDN); err != nil {
+	if err := r.reconcileHTTPProxy(ctx, &cr, proxyPort, spokeName, gatewayFQDN); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.syncStatus(ctx, &rp, gatewayPort, spokeName, gatewayFQDN)
+	return ctrl.Result{}, r.syncStatus(ctx, &cr, gatewayPort, spokeName, gatewayFQDN)
 }
 
-func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, image string, proxyPort int32, spokeName string) error {
+func (r *CloudRestApiProxyReconciler) reconcileDeployment(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy, image string, proxyPort int32, spokeName string) error {
 	replicas := int32(1)
-	stripPrefix := "/" + spokeName + "/registry"
+	stripPrefix := "/" + spokeName + "/cloud"
+	allowedDomains := strings.Join(cr.Spec.AllowedDomains, ",")
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      rp.Name + "-proxy",
-			Namespace: rp.Namespace,
+			Name:      cr.Name + "-cloud-proxy",
+			Namespace: cr.Namespace,
 		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {
-		if err := controllerutil.SetControllerReference(rp, dep, r.Scheme); err != nil {
+		if err := controllerutil.SetControllerReference(cr, dep, r.Scheme); err != nil {
 			return err
 		}
-		labels := map[string]string{"app": "registry-proxy", "registryproxy": rp.Name}
+		labels := map[string]string{"app": "cloud-proxy", "cloudrestapiproxy": cr.Name}
 		dep.Spec.Replicas = &replicas
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		dep.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{
-				ServiceAccountName: rp.Spec.ServiceAccountName,
+				ServiceAccountName: cr.Spec.ServiceAccountName,
 				Containers: []corev1.Container{
 					{
-						Name:    "registry-proxy",
+						Name:    "cloud-proxy",
 						Image:   image,
-						Command: []string{"/registry-proxy", fmt.Sprintf("--port=%d", proxyPort)},
+						Command: []string{"/cloud-proxy"},
 						Ports: []corev1.ContainerPort{
 							{Name: "proxy", ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
 						},
 						Env: []corev1.EnvVar{
 							{Name: "STRIP_PREFIX", Value: stripPrefix},
+							{Name: "PROXY_PORT", Value: fmt.Sprintf("%d", proxyPort)},
+							{Name: "ALLOWED_DOMAINS", Value: allowedDomains},
 						},
 					},
 				},
@@ -181,19 +185,19 @@ func (r *RegistryProxyReconciler) reconcileProxyDeployment(ctx context.Context, 
 	return err
 }
 
-func (r *RegistryProxyReconciler) reconcileProxyService(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32) error {
+func (r *CloudRestApiProxyReconciler) reconcileService(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy, proxyPort int32) error {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      rp.Name + "-proxy-svc",
-			Namespace: rp.Namespace,
+			Name:      cr.Name + "-cloud-proxy-svc",
+			Namespace: cr.Namespace,
 		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		if err := controllerutil.SetControllerReference(rp, svc, r.Scheme); err != nil {
+		if err := controllerutil.SetControllerReference(cr, svc, r.Scheme); err != nil {
 			return err
 		}
 		svc.Spec.Type = corev1.ServiceTypeClusterIP
-		svc.Spec.Selector = map[string]string{"registryproxy": rp.Name}
+		svc.Spec.Selector = map[string]string{"cloudrestapiproxy": cr.Name}
 		svc.Spec.Ports = []corev1.ServicePort{
 			{
 				Name:       "proxy",
@@ -207,25 +211,25 @@ func (r *RegistryProxyReconciler) reconcileProxyService(ctx context.Context, rp 
 	return err
 }
 
-func (r *RegistryProxyReconciler) reconcileHTTPProxy(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, proxyPort int32, spokeName, gatewayFQDN string) error {
-	localIP := fmt.Sprintf("%s-proxy-svc.%s.svc.cluster.local", rp.Name, rp.Namespace)
-	location := "/" + spokeName + "/registry"
+func (r *CloudRestApiProxyReconciler) reconcileHTTPProxy(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy, proxyPort int32, spokeName, gatewayFQDN string) error {
+	localIP := fmt.Sprintf("%s-cloud-proxy-svc.%s.svc.cluster.local", cr.Name, cr.Namespace)
+	location := "/" + spokeName + "/cloud"
 
 	hp := &tunnelv1alpha1.HTTPProxy{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      rp.Name + "-registry-proxy",
-			Namespace: rp.Namespace,
+			Name:      cr.Name + "-tunnel",
+			Namespace: cr.Namespace,
 		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, hp, func() error {
-		if err := controllerutil.SetControllerReference(rp, hp, r.Scheme); err != nil {
+		if err := controllerutil.SetControllerReference(cr, hp, r.Scheme); err != nil {
 			return err
 		}
 		if hp.Labels == nil {
 			hp.Labels = make(map[string]string)
 		}
-		hp.Labels["registryproxy"] = rp.Name
-		hp.Spec.ClientRef = tunnelv1alpha1.LocalObjectRef{Name: rp.Spec.ClientRef.Name}
+		hp.Labels["cloudrestapiproxy"] = cr.Name
+		hp.Spec.ClientRef = tunnelv1alpha1.LocalObjectRef{Name: cr.Spec.ClientRef.Name}
 		hp.Spec.LocalIP = localIP
 		hp.Spec.LocalPort = proxyPort
 		hp.Spec.CustomDomains = []string{gatewayFQDN}
@@ -235,9 +239,9 @@ func (r *RegistryProxyReconciler) reconcileHTTPProxy(ctx context.Context, rp *tu
 	return err
 }
 
-func (r *RegistryProxyReconciler) deleteOwnedResources(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy) error {
+func (r *CloudRestApiProxyReconciler) deleteOwnedResources(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy) error {
 	hp := &tunnelv1alpha1.HTTPProxy{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, hp); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name + "-tunnel"}, hp); err == nil {
 		if err := r.Delete(ctx, hp); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("delete HTTPProxy: %w", err)
 		}
@@ -245,20 +249,20 @@ func (r *RegistryProxyReconciler) deleteOwnedResources(ctx context.Context, rp *
 	return nil
 }
 
-func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1alpha1.RegistryProxy, vhostPort int32, spokeName, gatewayFQDN string) error {
+func (r *CloudRestApiProxyReconciler) syncStatus(ctx context.Context, cr *tunnelv1alpha1.CloudRestApiProxy, vhostPort int32, spokeName, gatewayFQDN string) error {
 	var dep appsv1.Deployment
 	proxyReady := false
-	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-proxy"}, &dep); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name + "-cloud-proxy"}, &dep); err == nil {
 		proxyReady = dep.Status.ReadyReplicas > 0
 	}
 
 	var hp tunnelv1alpha1.HTTPProxy
 	tunnelConnected := false
-	if err := r.Get(ctx, types.NamespacedName{Namespace: rp.Namespace, Name: rp.Name + "-registry-proxy"}, &hp); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name + "-tunnel"}, &hp); err == nil {
 		tunnelConnected = hp.Status.Phase == "Running"
 	}
 
-	updated := rp.DeepCopy()
+	updated := cr.DeepCopy()
 	now := metav1.Now()
 
 	setCondition := func(condType string, status metav1.ConditionStatus, reason, msg string) {
@@ -284,14 +288,14 @@ func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1al
 	if proxyReady {
 		setCondition("ProxyReady", metav1.ConditionTrue, "DeploymentReady", "")
 	} else {
-		setCondition("ProxyReady", metav1.ConditionFalse, "DeploymentNotReady", "waiting for registry-proxy pod")
+		setCondition("ProxyReady", metav1.ConditionFalse, "DeploymentNotReady", "waiting for cloud-proxy pod")
 	}
 	if tunnelConnected {
 		setCondition("TunnelConnected", metav1.ConditionTrue, "HTTPProxyRunning", "")
-		updated.Status.HubService = fmt.Sprintf("http://%s:%d/%s/registry", gatewayFQDN, vhostPort, spokeName)
+		updated.Status.GatewayURL = fmt.Sprintf("http://%s:%d/%s/cloud", gatewayFQDN, vhostPort, spokeName)
 	} else {
 		setCondition("TunnelConnected", metav1.ConditionFalse, "HTTPProxyNotRunning", "waiting for FRP tunnel")
-		updated.Status.HubService = ""
+		updated.Status.GatewayURL = ""
 	}
 
 	if proxyReady && tunnelConnected {
@@ -304,27 +308,26 @@ func (r *RegistryProxyReconciler) syncStatus(ctx context.Context, rp *tunnelv1al
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RegistryProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *CloudRestApiProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&tunnelv1alpha1.RegistryProxy{}).
+		For(&tunnelv1alpha1.CloudRestApiProxy{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// React to HTTPProxy status changes via label-based filtering.
 		Watches(
 			&tunnelv1alpha1.HTTPProxy{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
-				rpName, ok := obj.GetLabels()["registryproxy"]
-				if !ok || rpName == "" {
+				crName, ok := obj.GetLabels()["cloudrestapiproxy"]
+				if !ok || crName == "" {
 					return nil
 				}
 				return []reconcile.Request{{
 					NamespacedName: types.NamespacedName{
 						Namespace: obj.GetNamespace(),
-						Name:      rpName,
+						Name:      crName,
 					},
 				}}
 			}),
 		).
-		Named("registryproxy").
+		Named("cloudrestapiproxy").
 		Complete(r)
 }

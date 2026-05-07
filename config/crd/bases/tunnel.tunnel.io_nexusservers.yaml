@@ -93,6 +93,15 @@ spec:
                 description: DashboardUser is the username for the frps dashboard.
                   Optional.
                 type: string
+              discoveryPort:
+                description: |-
+                  DiscoveryPort is the port the nexus-discovery sidecar listens on inside
+                  the frps pod. When non-zero, a nexus-discovery sidecar is injected into
+                  the frps Deployment and this port is added to the frps LoadBalancer Service.
+                  Spoke NexusClients with serverRef.discoveryPort set query this endpoint
+                  to auto-discover the hub gateway FQDN and vhostHTTPPort.
+                format: int32
+                type: integer
               enableOperatorPlugin:
                 description: |-
                   EnableOperatorPlugin enables the frps httpPlugin that notifies the
@@ -101,6 +110,12 @@ spec:
                 type: boolean
               extraConfig:
                 description: ExtraConfig is raw TOML appended verbatim to frps.toml.
+                type: string
+              gatewayServiceType:
+                default: ClusterIP
+                description: |-
+                  GatewayServiceType is the K8s Service type for the unified HTTP gateway.
+                  The gateway Service is only created when vhostHTTPPort is non-zero.
                 type: string
               image:
                 description: Image specifies the container image for frps.

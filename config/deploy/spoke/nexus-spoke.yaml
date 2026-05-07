@@ -1,0 +1,18 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusClient
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: crd-tunnel-system
+spec:
+  serverRef:
+    address: crd-fleet.central.tech
+    port: 7000
+    discoveryPort: 7001
+  authTokenSecret:
+    name: crd-tunnel-system-auth-token
+    key: token
+  admin:
+    port: 7400       
+

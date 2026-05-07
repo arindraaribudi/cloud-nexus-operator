@@ -4,10 +4,16 @@ IMG ?= controller:latest
 # FRP operator image settings
 REGISTRY ?= asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops
 FRP_VERSION ?= v0.68.1
-TUNNEL_VERSION ?= 1.0.4
-OPERATOR_VERSION ?= 1.0.12
-WEBHOOK_VERSION ?= 1.0.2
+TUNNEL_VERSION ?= 1.0.7
+OPERATOR_VERSION ?= 1.0.15
+WEBHOOK_VERSION ?= 1.0.3
 PLATFORMS ?= linux/amd64,linux/arm64,linux/arm/v7
+
+# Full image references — override these to push to a custom registry/tag.
+# Example: make docker-build TUNNEL_IMG=myrepo/app:tunnel-1.0.6
+TUNNEL_IMG   ?= $(REGISTRY)/crd-tunnel:$(TUNNEL_VERSION)
+OPERATOR_IMG ?= $(REGISTRY)/crd-tunnel-operator:$(OPERATOR_VERSION)
+WEBHOOK_IMG  ?= $(REGISTRY)/crd-tunnel-webhook:$(WEBHOOK_VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -128,13 +134,13 @@ docker-buildx-setup: ## Create a multi-platform buildx builder if not already pr
 		$(CONTAINER_TOOL) buildx create --name frp-builder --use
 
 .PHONY: docker-build-frp
-docker-build-frp: docker-buildx-setup ## Build and push the unified crd-tunnel image (frps + frpc + registry-proxy).
+docker-build-frp: docker-buildx-setup ## Build and push the unified crd-tunnel image (frps + frpc + registry-proxy + nexus-discovery).
 	$(CONTAINER_TOOL) buildx build \
 		--builder frp-builder \
 		--platform $(PLATFORMS) \
 		--build-arg FRP_VERSION=$(FRP_VERSION) \
 		--push \
-		-t $(REGISTRY)/crd-tunnel:$(TUNNEL_VERSION) \
+		-t $(TUNNEL_IMG) \
 		-f docker/Dockerfile.frp .
 
 .PHONY: docker-build-operator
@@ -143,7 +149,7 @@ docker-build-operator: docker-buildx-setup ## Build and push the crd-tunnel-oper
 		--builder frp-builder \
 		--platform $(PLATFORMS) \
 		--push \
-		-t $(REGISTRY)/crd-tunnel-operator:$(OPERATOR_VERSION) \
+		-t $(OPERATOR_IMG) \
 		.
 
 .PHONY: docker-build-webhook
@@ -152,7 +158,7 @@ docker-build-webhook: docker-buildx-setup ## Build and push the crd-tunnel-webho
 		--builder frp-builder \
 		--platform $(PLATFORMS) \
 		--push \
-		-t $(REGISTRY)/crd-tunnel-webhook:$(WEBHOOK_VERSION) \
+		-t $(WEBHOOK_IMG) \
 		-f docker/Dockerfile.webhook .
 
 .PHONY: docker-build

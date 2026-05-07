@@ -1,0 +1,24 @@
+apiVersion: tunnel.tunnel.io/v1alpha1
+kind: NexusServer
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: crd-tunnel-system
+spec:
+  bindPort: 7000
+  vhostHTTPPort: 8080
+  discoveryPort: 7001
+  gatewayServiceType: ClusterIP  
+  service:
+    type: LoadBalancer          
+    ports:
+      - name: frp
+        port: 7000
+        protocol: TCP
+    annotations: 
+      networking.gke.io/load-balancer-ip-addresses: th-crd-nlb-ip
+      cloud.google.com/network-tier: Standard
+      cloud.google.com/l4-rbs: "enabled"
+
+  enableOperatorPlugin: true

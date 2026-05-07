@@ -18,8 +18,14 @@ spec:
   bindPort: 7000
 
   # --- Virtual host ports (required for HTTPProxy / HTTPSProxy types) ---
-  # vhostHTTPPort: 8080      # port frps listens on for HTTP virtual host traffic
+  vhostHTTPPort: 8080          # enables FRP HTTP routing and creates {name}-gateway Service
   # vhostHTTPSPort: 8443     # port frps listens on for HTTPS virtual host traffic
+
+  # --- Discovery port (optional) ---
+  # discoveryPort: 0           # when non-zero, injects nexus-discovery sidecar so spoke NexusClients can auto-resolve hub gateway
+
+  # --- Gateway Service Type ---
+  gatewayServiceType: ClusterIP  # ClusterIP (hub-internal) or LoadBalancer
 
   # --- Dashboard (optional web UI) ---
   # dashboardPort: 7500

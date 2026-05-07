@@ -4,22 +4,22 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: nexusclients.tunnel.tunnel.io
+  name: cloudrestapiproxies.tunnel.tunnel.io
 spec:
   group: tunnel.tunnel.io
   names:
-    kind: NexusClient
-    listKind: NexusClientList
-    plural: nexusclients
-    singular: nexusclient
+    kind: CloudRestApiProxy
+    listKind: CloudRestApiProxyList
+    plural: cloudrestapiproxies
+    singular: cloudrestapiproxy
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.serverAddress
-      name: Server
+    - jsonPath: .status.gatewayURL
+      name: GatewayURL
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -27,7 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: NexusClient is the Schema for the nexusclients API.
+        description: CloudRestApiProxy is the Schema for the cloudrestapiproxies API.
         properties:
           apiVersion:
             description: |-
@@ -47,52 +47,28 @@ spec:
           metadata:
             type: object
           spec:
-            description: NexusClientSpec defines the desired state of NexusClient.
+            description: CloudRestApiProxySpec defines the desired state of CloudRestApiProxy.
             properties:
-              admin:
-                description: Admin configures the frpc local admin API (used for hot
-                  reload).
-                properties:
-                  port:
-                    default: 7400
-                    format: int32
-                    type: integer
-                  tokenSecret:
-                    description: |-
-                      TokenSecret is the secret containing the admin API bearer token.
-                      When nil, the operator creates a random token secret automatically.
-                    properties:
-                      key:
-                        description: Key is the key within the Secret.
-                        type: string
-                      name:
-                        description: Name is the name of the Secret.
-                        type: string
-                    required:
-                    - key
-                    - name
-                    type: object
-                type: object
-              authTokenSecret:
+              allowedDomains:
                 description: |-
-                  AuthTokenSecret is the secret containing the auth token presented to frps.
-                  When nil, the operator inherits or creates a token automatically.
+                  AllowedDomains is an optional allowlist of upstream cloud FQDNs.
+                  Supports wildcards: ["*.amazonaws.com", "*.googleapis.com"].
+                  If empty, all domains are permitted.
+                items:
+                  type: string
+                type: array
+              clientRef:
+                description: ClientRef references the NexusClient (spoke) that owns
+                  the tunnel.
                 properties:
-                  key:
-                    description: Key is the key within the Secret.
-                    type: string
                   name:
-                    description: Name is the name of the Secret.
+                    description: Name is the name of the referenced object.
                     type: string
                 required:
-                - key
                 - name
                 type: object
-              extraConfig:
-                description: ExtraConfig is raw TOML appended verbatim to frpc.toml.
-                type: string
               image:
-                description: Image specifies the container image for frpc.
+                description: Image overrides the default cloud-proxy container image.
                 properties:
                   repository:
                     default: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
@@ -101,39 +77,26 @@ spec:
                     default: 1.0.0
                     type: string
                 type: object
-              serverRef:
-                description: ServerRef resolves the address of the NexusServer.
-                properties:
-                  address:
-                    description: Address is an explicit server host or IP (used when
-                      Name is empty).
-                    type: string
-                  discoveryPort:
-                    description: |-
-                      DiscoveryPort is the nexus-discovery port on the server.
-                      When non-zero and Name is empty, the NexusClient controller calls
-                      http://{address}:{discoveryPort}/api/nexus-info to auto-discover
-                      the hub gateway FQDN and port, storing them in status.
-                    format: int32
-                    type: integer
-                  name:
-                    description: |-
-                      Name references an NexusServer in the same namespace; the operator will
-                      look up its status.address and status.port.
-                    type: string
-                  port:
-                    description: Port is an explicit server port (used when Name is
-                      empty).
-                    format: int32
-                    type: integer
-                type: object
+              proxyPort:
+                default: 8080
+                description: ProxyPort is the port the cloud-proxy pod listens on
+                  inside the spoke.
+                format: int32
+                type: integer
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName is the Kubernetes SA annotated with cloud credentials
+                  (IRSA for AWS, Workload Identity for GCP, Azure Workload Identity for Azure).
+                type: string
             required:
-            - serverRef
+            - clientRef
+            - serviceAccountName
             type: object
           status:
-            description: NexusClientStatus defines the observed state of NexusClient.
+            description: CloudRestApiProxyStatus defines the observed state of CloudRestApiProxy.
             properties:
               conditions:
+                description: Conditions reports detailed lifecycle state.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -192,21 +155,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              gatewayFQDN:
+              gatewayURL:
                 description: |-
-                  GatewayFQDN is the hub-side gateway service FQDN, populated by the
-                  NexusClient controller via local NexusServer lookup or discovery endpoint.
-                  Read by RegistryProxy and CloudRestApiProxy controllers.
+                  GatewayURL is the base URL on the hub gateway for this proxy.
+                  e.g. http://hub-gateway.default.svc.cluster.local:8080/spoke1/cloud
                 type: string
-              gatewayPort:
-                description: GatewayPort is the vhostHTTPPort on the hub gateway.
-                format: int32
-                type: integer
               phase:
-                description: Phase is the current lifecycle phase.
-                type: string
-              serverAddress:
-                description: ServerAddress is the resolved server address (host:port).
+                description: Phase is Pending, Running, or Failed.
                 type: string
             type: object
         required:

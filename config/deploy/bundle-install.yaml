@@ -5,7 +5,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: cloud-nexus-operator
     control-plane: controller-manager
-  name: frp-system
+  name: crd-tunnel-system
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -116,6 +116,14 @@ spec:
                     description: Address is an explicit server host or IP (used when
                       Name is empty).
                     type: string
+                  discoveryPort:
+                    description: |-
+                      DiscoveryPort is the nexus-discovery port on the server.
+                      When non-zero and Name is empty, the NexusClient controller calls
+                      http://{address}:{discoveryPort}/api/nexus-info to auto-discover
+                      the hub gateway FQDN and port, storing them in status.
+                    format: int32
+                    type: integer
                   name:
                     description: |-
                       Name references an NexusServer in the same namespace; the operator will
@@ -192,6 +200,16 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              gatewayFQDN:
+                description: |-
+                  GatewayFQDN is the hub-side gateway service FQDN, populated by the
+                  NexusClient controller via local NexusServer lookup or discovery endpoint.
+                  Read by RegistryProxy and CloudRestApiProxy controllers.
+                type: string
+              gatewayPort:
+                description: GatewayPort is the vhostHTTPPort on the hub gateway.
+                format: int32
+                type: integer
               phase:
                 description: Phase is the current lifecycle phase.
                 type: string
@@ -400,7 +418,7 @@ spec:
     kind: NexusServer
     listKind: NexusServerList
     plural: nexusservers
-    singular: frpserver
+    singular: nexusserver
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -482,8 +500,29 @@ spec:
                 description: DashboardUser is the username for the frps dashboard.
                   Optional.
                 type: string
+              discoveryPort:
+                description: |-
+                  DiscoveryPort is the port the nexus-discovery sidecar listens on inside
+                  the frps pod. When non-zero, a nexus-discovery sidecar is injected into
+                  the frps Deployment and this port is added to the frps LoadBalancer Service.
+                  Spoke NexusClients with serverRef.discoveryPort set query this endpoint
+                  to auto-discover the hub gateway FQDN and vhostHTTPPort.
+                format: int32
+                type: integer
+              enableOperatorPlugin:
+                description: |-
+                  EnableOperatorPlugin enables the frps httpPlugin that notifies the
+                  operator when proxies connect/disconnect. Required for RegistryProxy.
+                  Default: false
+                type: boolean
               extraConfig:
                 description: ExtraConfig is raw TOML appended verbatim to frps.toml.
+                type: string
+              gatewayServiceType:
+                default: ClusterIP
+                description: |-
+                  GatewayServiceType is the K8s Service type for the unified HTTP gateway.
+                  The gateway Service is only created when vhostHTTPPort is non-zero.
                 type: string
               image:
                 description: Image specifies the container image for frps.
@@ -495,6 +534,14 @@ spec:
                     default: 1.0.0
                     type: string
                 type: object
+              operatorWebhookAddr:
+                description: |-
+                  OperatorWebhookAddr is the address of the operator frps-plugin HTTP server.
+                  Only used when EnableOperatorPlugin is true.
+                  Example: "cloud-nexus-operator-controller-manager-frps-plugin.cloud-nexus-operator-system.svc.cluster.local:9090"
+                  If empty, defaults to "controller-manager-frps-plugin.<namespace>.svc.cluster.local:9090"
+                  where <namespace> is the NexusServer's namespace.
+                type: string
               replicas:
                 default: 1
                 format: int32
@@ -676,6 +723,1651 @@ spec:
     subresources:
       status: {}
 ---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: tcpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: TCPProxy
+    listKind: TCPProxyList
+    plural: tcpproxies
+    singular: tcpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TCPProxy is the Schema for the tcpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TCPProxySpec defines the desired state of TCPProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              remotePort:
+                description: RemotePort is the port exposed on the frps side.
+                format: int32
+                type: integer
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: udpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: UDPProxy
+    listKind: UDPProxyList
+    plural: udpproxies
+    singular: udpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: UDPProxy is the Schema for the udpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: UDPProxySpec defines the desired state of UDPProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              remotePort:
+                description: RemotePort is the port exposed on the frps side.
+                format: int32
+                type: integer
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: httpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: HTTPProxy
+    listKind: HTTPProxyList
+    plural: httpproxies
+    singular: httpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HTTPProxy is the Schema for the httpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HTTPProxySpec defines the desired state of HTTPProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              customDomains:
+                description: CustomDomains lists the virtual host domains.
+                items:
+                  type: string
+                type: array
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              remotePort:
+                description: RemotePort is the optional port exposed on the frps side.
+                format: int32
+                type: integer
+              subdomain:
+                description: Subdomain is the subdomain for virtual hosting.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: httpsproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: HTTPSProxy
+    listKind: HTTPSProxyList
+    plural: httpsproxies
+    singular: httpsproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HTTPSProxy is the Schema for the httpsproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HTTPSProxySpec defines the desired state of HTTPSProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              customDomains:
+                description: CustomDomains lists the virtual host domains.
+                items:
+                  type: string
+                type: array
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              remotePort:
+                description: RemotePort is the optional port exposed on the frps side.
+                format: int32
+                type: integer
+              subdomain:
+                description: Subdomain is the subdomain for virtual hosting.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: tcpmuxproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: TCPMuxProxy
+    listKind: TCPMuxProxyList
+    plural: tcpmuxproxies
+    singular: tcpmuxproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TCPMuxProxy is the Schema for the tcpmuxproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TCPMuxProxySpec defines the desired state of TCPMuxProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              customDomains:
+                description: CustomDomains lists the virtual host domains.
+                items:
+                  type: string
+                type: array
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              multiplexer:
+                default: httpconnect
+                description: 'Multiplexer is the multiplexer type. Default: httpconnect.'
+                type: string
+              subdomain:
+                description: Subdomain is the subdomain for virtual hosting.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: stcpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: STCPProxy
+    listKind: STCPProxyList
+    plural: stcpproxies
+    singular: stcpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: STCPProxy is the Schema for the stcpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: STCPProxySpec defines the desired state of STCPProxy.
+            properties:
+              allowUsers:
+                description: AllowUsers lists the visitor names allowed to connect.
+                items:
+                  type: string
+                type: array
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              secretKey:
+                description: SecretKey is the shared secret that visitors must present.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: xtcpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: XTCPProxy
+    listKind: XTCPProxyList
+    plural: xtcpproxies
+    singular: xtcpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: XTCPProxy is the Schema for the xtcpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: XTCPProxySpec defines the desired state of XTCPProxy.
+            properties:
+              allowUsers:
+                description: AllowUsers lists the visitor names allowed to connect.
+                items:
+                  type: string
+                type: array
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              secretKey:
+                description: SecretKey is the shared secret that visitors must present.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: sudpproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: SUDPProxy
+    listKind: SUDPProxyList
+    plural: sudpproxies
+    singular: sudpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.clientRef.name
+      name: Client
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SUDPProxy is the Schema for the sudpproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SUDPProxySpec defines the desired state of SUDPProxy.
+            properties:
+              allowUsers:
+                description: AllowUsers lists the visitor names allowed to connect.
+                items:
+                  type: string
+                type: array
+              clientRef:
+                description: ClientRef references the parent NexusClient.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              extraConfig:
+                description: ExtraConfig is raw TOML appended verbatim to this proxy
+                  block.
+                type: string
+              localIP:
+                description: LocalIP is the local service IP (default 127.0.0.1).
+                type: string
+              localPort:
+                description: LocalPort is the local service port.
+                format: int32
+                type: integer
+              secretKey:
+                description: SecretKey is the shared secret that visitors must present.
+                type: string
+            required:
+            - clientRef
+            - localPort
+            type: object
+          status:
+            description: ProxyStatus is the observed state shared by all typed proxy
+              CRDs.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastReloadTime:
+                description: LastReloadTime is the time of the last successful hot
+                  reload.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current lifecycle phase (Pending/Running/Failed).
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: registryproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: RegistryProxy
+    listKind: RegistryProxyList
+    plural: registryproxies
+    singular: registryproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.hubService
+      name: HubService
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: RegistryProxy is the Schema for the registryproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: RegistryProxySpec defines the desired state of RegistryProxy.
+            properties:
+              clientRef:
+                description: ClientRef references the NexusClient (spoke) that owns
+                  the tunnel.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              image:
+                description: |-
+                  Image overrides the proxy container image.
+                  Defaults to the image used by the referenced NexusClient.
+                properties:
+                  repository:
+                    default: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
+                    type: string
+                  tag:
+                    default: 1.0.0
+                    type: string
+                type: object
+              proxyPort:
+                description: |-
+                  ProxyPort is the port the registry-proxy binary listens on inside the Pod.
+                  Default: 5000
+                format: int32
+                type: integer
+              remotePort:
+                description: |-
+                  RemotePort is the port frps will bind on the hub side.
+                  Must not conflict with other FrpProxy remotePort values on the same NexusClient.
+                format: int32
+                type: integer
+              serviceAccountName:
+                description: ServiceAccountName is the Kubernetes SA annotated with
+                  WI/IRSA for cloud auth.
+                type: string
+            required:
+            - clientRef
+            - remotePort
+            - serviceAccountName
+            type: object
+          status:
+            description: RegistryProxyStatus defines the observed state of RegistryProxy.
+            properties:
+              conditions:
+                description: |-
+                  Conditions reports the detailed lifecycle state.
+                  Known condition types:
+                    ProxyReady      - registry-proxy Deployment is healthy
+                    TunnelConnected - owned FrpProxy phase is Running (tunnel is active)
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              hubService:
+                description: |-
+                  HubService is the FQDN of the hub-side Service once created.
+                  Example: reg-1-docker.tunnels.svc.cluster.local
+                type: string
+              phase:
+                description: 'Phase is the current lifecycle phase: Pending | Running
+                  | Failed.'
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: cloudrestapiproxies.tunnel.tunnel.io
+spec:
+  group: tunnel.tunnel.io
+  names:
+    kind: CloudRestApiProxy
+    listKind: CloudRestApiProxyList
+    plural: cloudrestapiproxies
+    singular: cloudrestapiproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.gatewayURL
+      name: GatewayURL
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CloudRestApiProxy is the Schema for the cloudrestapiproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: CloudRestApiProxySpec defines the desired state of CloudRestApiProxy.
+            properties:
+              allowedDomains:
+                description: |-
+                  AllowedDomains is an optional allowlist of upstream cloud FQDNs.
+                  Supports wildcards: ["*.amazonaws.com", "*.googleapis.com"].
+                  If empty, all domains are permitted.
+                items:
+                  type: string
+                type: array
+              clientRef:
+                description: ClientRef references the NexusClient (spoke) that owns
+                  the tunnel.
+                properties:
+                  name:
+                    description: Name is the name of the referenced object.
+                    type: string
+                required:
+                - name
+                type: object
+              image:
+                description: Image overrides the default cloud-proxy container image.
+                properties:
+                  repository:
+                    default: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel
+                    type: string
+                  tag:
+                    default: 1.0.0
+                    type: string
+                type: object
+              proxyPort:
+                default: 8080
+                description: ProxyPort is the port the cloud-proxy pod listens on
+                  inside the spoke.
+                format: int32
+                type: integer
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName is the Kubernetes SA annotated with cloud credentials
+                  (IRSA for AWS, Workload Identity for GCP, Azure Workload Identity for Azure).
+                type: string
+            required:
+            - clientRef
+            - serviceAccountName
+            type: object
+          status:
+            description: CloudRestApiProxyStatus defines the observed state of CloudRestApiProxy.
+            properties:
+              conditions:
+                description: Conditions reports detailed lifecycle state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              gatewayURL:
+                description: |-
+                  GatewayURL is the base URL on the hub gateway for this proxy.
+                  e.g. http://hub-gateway.default.svc.cluster.local:8080/spoke1/cloud
+                type: string
+              phase:
+                description: Phase is Pending, Running, or Failed.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -683,7 +2375,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: cloud-nexus-operator
   name: cloud-nexus-operator-controller-manager
-  namespace: frp-system
+  namespace: crd-tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -692,7 +2384,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: cloud-nexus-operator
   name: cloud-nexus-operator-leader-election-role
-  namespace: frp-system
+  namespace: crd-tunnel-system
 rules:
 - apiGroups:
   - ""
@@ -984,6 +2676,16 @@ rules:
   - nexusclients
   - frpproxies
   - nexusservers
+  - tcpproxies
+  - udpproxies
+  - httpproxies
+  - httpsproxies
+  - tcpmuxproxies
+  - stcpproxies
+  - xtcpproxies
+  - sudpproxies
+  - registryproxies
+  - cloudrestapiproxies
   verbs:
   - create
   - delete
@@ -998,6 +2700,16 @@ rules:
   - nexusclients/finalizers
   - frpproxies/finalizers
   - nexusservers/finalizers
+  - tcpproxies/finalizers
+  - udpproxies/finalizers
+  - httpproxies/finalizers
+  - httpsproxies/finalizers
+  - tcpmuxproxies/finalizers
+  - stcpproxies/finalizers
+  - xtcpproxies/finalizers
+  - sudpproxies/finalizers
+  - registryproxies/finalizers
+  - cloudrestapiproxies/finalizers
   verbs:
   - update
 - apiGroups:
@@ -1006,6 +2718,16 @@ rules:
   - nexusclients/status
   - frpproxies/status
   - nexusservers/status
+  - tcpproxies/status
+  - udpproxies/status
+  - httpproxies/status
+  - httpsproxies/status
+  - tcpmuxproxies/status
+  - stcpproxies/status
+  - xtcpproxies/status
+  - sudpproxies/status
+  - registryproxies/status
+  - cloudrestapiproxies/status
   verbs:
   - get
   - patch
@@ -1046,7 +2768,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: cloud-nexus-operator
   name: cloud-nexus-operator-leader-election-rolebinding
-  namespace: frp-system
+  namespace: crd-tunnel-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -1054,7 +2776,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: cloud-nexus-operator-controller-manager
-  namespace: frp-system
+  namespace: crd-tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1070,7 +2792,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: cloud-nexus-operator-controller-manager
-  namespace: frp-system
+  namespace: crd-tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1083,7 +2805,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: cloud-nexus-operator-controller-manager
-  namespace: frp-system
+  namespace: crd-tunnel-system
 ---
 apiVersion: v1
 kind: Service
@@ -1093,7 +2815,7 @@ metadata:
     app.kubernetes.io/name: cloud-nexus-operator
     control-plane: controller-manager
   name: cloud-nexus-operator-controller-manager-metrics-service
-  namespace: frp-system
+  namespace: crd-tunnel-system
 spec:
   ports:
   - name: https
@@ -1112,7 +2834,7 @@ metadata:
     app.kubernetes.io/name: cloud-nexus-operator
     control-plane: controller-manager
   name: cloud-nexus-operator-controller-manager
-  namespace: frp-system
+  namespace: crd-tunnel-system
 spec:
   replicas: 1
   selector:
@@ -1134,7 +2856,10 @@ spec:
         - --health-probe-bind-address=:8081
         command:
         - /manager
-        image: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator:1.0.0
+        env:
+        - name: TUNNEL_IMAGE
+          value: "asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel:1.0.5"
+        image: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-operator:1.0.13
         livenessProbe:
           httpGet:
             path: /healthz
@@ -1170,3 +2895,129 @@ spec:
       serviceAccountName: cloud-nexus-operator-controller-manager
       terminationGracePeriodSeconds: 10
       volumes: []
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: frps-webhook
+  namespace: crd-tunnel-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frps-webhook-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: frps-webhook-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: frps-webhook-role
+subjects:
+- kind: ServiceAccount
+  name: frps-webhook
+  namespace: crd-tunnel-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frps-webhook
+  namespace: crd-tunnel-system
+  labels:
+    app: frps-webhook
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frps-webhook
+  template:
+    metadata:
+      labels:
+        app: frps-webhook
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: frps-webhook
+        command:
+        - /frps-webhook
+        args:
+        - --health-probe-bind-address=:8082
+        image: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel-webhook:1.0.3
+        ports:
+        - containerPort: 9090
+          name: frps-plugin
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        volumeMounts: []
+      volumes: []
+      serviceAccountName: frps-webhook
+      terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-manager-frps-plugin
+  namespace: crd-tunnel-system
+  labels:
+    app: frps-webhook
+    app.kubernetes.io/name: cloud-nexus-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app: frps-webhook
+  ports:
+  - name: frps-plugin
+    port: 9090
+    targetPort: 9090
+    protocol: TCP

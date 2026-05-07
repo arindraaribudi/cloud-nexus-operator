@@ -11,11 +11,12 @@ spec:
   #   repository: asia-southeast3-docker.pkg.dev/crd-operations/crd-gitops/crd-tunnel  # default
   #   tag: "1.0.0"                                                                       # default
 
-  # --- Server reference (required; use 'name' OR 'address'+'port', not both) ---
+  # --- Server reference (required; use 'name' OR 'address'+'port'+'discoveryPort', not both) ---
   serverRef:
     name: nexusserver-sample     # name of a NexusServer in this namespace
     # address: ""                # alternative: explicit frps host / IP
     # port: 0                    # alternative: explicit frps port
+    # discoveryPort: 0           # optional: nexus-discovery port; auto-resolves hub gateway FQDN and vhostHTTPPort
 
   # --- Auth token (nil = operator inherits from NexusServer or auto-creates) ---
   # authTokenSecret:

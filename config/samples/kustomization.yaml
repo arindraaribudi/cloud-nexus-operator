@@ -11,4 +11,5 @@ resources:
 - tunnel_v1alpha1_xtcpproxy.yaml
 - tunnel_v1alpha1_sudpproxy.yaml
 - tunnel_v1alpha1_registryproxy.yaml
+- tunnel_v1alpha1_cloudrestapiproxy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
